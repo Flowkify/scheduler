@@ -1,0 +1,162 @@
+html,
+body,
+#root {
+  min-width: 1040px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    radial-gradient(circle at 15% -10%, rgb(79 111 202 / 10%), transparent 32%),
+    #f4f6fa;
+  color: #172033;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.demo-shell {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  padding: 30px;
+}
+
+.demo-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  max-width: 1500px;
+  width: 100%;
+  margin: 0 auto 20px;
+}
+
+.demo-heading > div > span {
+  color: #5869c8;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.demo-heading h1 {
+  max-width: 720px;
+  margin: 6px 0 5px;
+  font-size: clamp(24px, 3vw, 38px);
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+}
+
+.demo-heading p {
+  margin: 0;
+  color: #657087;
+}
+
+.fixture-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #dce1e8;
+  border-radius: 9px;
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.demo-board {
+  flex: 1;
+  max-width: 1500px;
+  width: 100%;
+  min-height: 680px;
+  margin: auto;
+}
+
+.demo-board .fks-root {
+  height: calc(100vh - 170px);
+  min-height: 620px;
+}
+
+.demo-hover > span {
+  color: #6c7484;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.demo-hover > strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.demo-hover p {
+  color: #667085;
+}
+
+.demo-hover footer {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 11px;
+}
+
+.demo-hover b {
+  color: #5869c8;
+}
+
+.demo-modal-backdrop {
+  position: fixed;
+  z-index: 20000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(15 23 42 / 36%);
+}
+
+.demo-modal {
+  width: 420px;
+  padding: 24px;
+  border-radius: 16px;
+  background: white;
+  box-shadow: 0 30px 80px rgb(15 23 42 / 26%);
+}
+
+.demo-modal > span {
+  color: #657087;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.demo-modal h2 {
+  margin: 4px 0 12px;
+}
+
+.demo-modal dl div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.demo-modal dd {
+  margin: 0;
+  font-weight: 650;
+}
+
+.demo-modal button {
+  width: 100%;
+  height: 38px;
+  margin-top: 16px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: #5869c8;
+  cursor: pointer;
+}
+

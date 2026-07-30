@@ -1,0 +1,26 @@
+{
+  "name": "flowkify-scheduler-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @flowkify/scheduler && npm run build --workspace @flowkify/scheduler-demo && npm run build --workspace @flowkify/scheduler-pcf",
+    "build:library": "npm run build --workspace @flowkify/scheduler",
+    "dev": "npm run dev --workspace @flowkify/scheduler-demo",
+    "test": "npm run test --workspace @flowkify/scheduler && npm run test --workspace @flowkify/scheduler-pcf",
+    "test:e2e": "playwright test",
+    "test:watch": "npm run test:watch --workspace @flowkify/scheduler",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0"
+}
