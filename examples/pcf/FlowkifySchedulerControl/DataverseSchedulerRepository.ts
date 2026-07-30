@@ -115,7 +115,7 @@ export class DataverseSchedulerRepository {
       .filter((entry) => intersects(entry.startDate, entry.endDate, range));
     const holidayDates = new Set(
       holidayRows
-        .map((row) => text(row, "flowkify_date"))
+        .map((row) => date(row, "flowkify_date"))
         .filter((date) => date >= range.startDate && date <= range.endDate)
     );
     return {
@@ -190,10 +190,10 @@ export class DataverseSchedulerRepository {
     const updated = rows.map((row) => ({
       ...row,
       flowkify_startdate: addDays(
-        text(row, "flowkify_startdate"),
+        date(row, "flowkify_startdate"),
         startDelta
       ),
-      flowkify_enddate: addDays(text(row, "flowkify_enddate"), endDelta),
+      flowkify_enddate: addDays(date(row, "flowkify_enddate"), endDelta),
       _flowkify_person_value: mutation.proposed.personId
     }));
 
@@ -251,14 +251,15 @@ export class DataverseSchedulerRepository {
             row,
             "flowkify_lastname"
           )}`.trim();
-        const employmentEndDate = optionalText(row, "flowkify_enddate");
+        const employmentEndDate =
+          date(row, "flowkify_enddate") || undefined;
         return {
           id: text(row, "flowkify_personid"),
           name,
           secondaryText: text(row, "flowkify_jobtitle") || "Team member",
           metadata: {
             weeklyHours: number(row, "flowkify_workhoursperweek"),
-            employmentStartDate: text(row, "flowkify_startdate"),
+            employmentStartDate: date(row, "flowkify_startdate"),
             ...(employmentEndDate ? { employmentEndDate } : {})
           }
         };
@@ -338,14 +339,15 @@ function mapAllocation(
   const recurring =
     Boolean(rootAllocationId) ||
     (recurrencePattern !== 0 && recurrencePattern !== NON_REPEATING);
-  const recurrenceEndDate = optionalText(row, "flowkify_recurrenceenddate");
+  const recurrenceEndDate =
+    date(row, "flowkify_recurrenceenddate") || undefined;
   return {
     id,
     personId: text(row, "_flowkify_person_value"),
     projectId: text(row, "_flowkify_projectid_value"),
     kind: "allocation",
-    startDate: text(row, "flowkify_startdate"),
-    endDate: text(row, "flowkify_enddate"),
+    startDate: date(row, "flowkify_startdate"),
+    endDate: date(row, "flowkify_enddate"),
     hoursPerDay: number(row, "flowkify_hoursperday"),
     title: text(row, "flowkify_name"),
     metadata: {
@@ -367,8 +369,8 @@ function mapTimeOff(
     id: `timeoff:${id}`,
     personId: text(row, "_flowkify_personid_value"),
     kind: "absence",
-    startDate: text(row, "flowkify_startdate"),
-    endDate: text(row, "flowkify_enddate"),
+    startDate: date(row, "flowkify_startdate"),
+    endDate: date(row, "flowkify_enddate"),
     hoursPerDay: number(row, "flowkify_hoursperday"),
     title:
       formatted(row, "_flowkify_timeofftypeid_value") ||
@@ -424,6 +426,10 @@ function text(row: DataverseRow, key: string): string {
 
 function optionalText(row: DataverseRow, key: string): string | undefined {
   return text(row, key) || undefined;
+}
+
+function date(row: DataverseRow, key: string): string {
+  return text(row, key).slice(0, 10);
 }
 
 function number(row: DataverseRow, key: string): number {

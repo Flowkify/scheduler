@@ -4,6 +4,7 @@ coverage/
 playwright-report/
 test-results/
 out/
+obj/
 *.log
 .DS_Store
 

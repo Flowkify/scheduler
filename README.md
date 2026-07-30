@@ -6,7 +6,7 @@ The v1 workspace contains:
 
 - `@flowkify/scheduler`: the generic React 17 scheduler.
 - `apps/demo`: a standalone interactive demo and 1,000-person fixture.
-- `examples/pcf`: a Flowkify Dataverse adapter and PCF host example.
+- [`examples/pcf`](examples/pcf/README.md): a Flowkify Dataverse adapter and PCF host example.
 
 ## Development
 
