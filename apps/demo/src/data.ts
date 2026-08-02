@@ -1,6 +1,7 @@
 import {
   addDays,
   eachDay,
+  getVisibleRange,
   type DailyCapacity,
   type SchedulerEntry,
   type SchedulerPerson,
@@ -87,6 +88,7 @@ export function createDemoData(
   const next = random(personCount * 100_000 + entryCount);
   const people = Array.from({ length: personCount }, (_, index) => ({
     id: `person-${index}`,
+    displayName: firstNames[index % firstNames.length] ?? "Person",
     name: `${firstNames[index % firstNames.length]} ${
       lastNames[Math.floor(index / firstNames.length) % lastNames.length]
     }`,
@@ -128,6 +130,51 @@ export function createDemoData(
             }
           }
         : {})
+    });
+  }
+  const overlapPerson = people[0];
+  if (overlapPerson) {
+    const overlapStart = addDays(
+      getVisibleRange({ zoom: "week", anchorDate }, 1).startDate,
+      1
+    );
+    for (let index = 0; index < 4; index += 1) {
+      const project = demoProjects[index % demoProjects.length];
+      if (!project) continue;
+      entries.push({
+        id: `overlap-${index}`,
+        personId: overlapPerson.id,
+        projectId: project.id,
+        kind: "allocation",
+        startDate: overlapStart,
+        endDate: addDays(overlapStart, 2),
+        hoursPerDay: 2,
+        title: project.name,
+        ...(project.customerName ? { customerName: project.customerName } : {}),
+        details: "Deterministic overlapping allocation for row expansion"
+      });
+    }
+  }
+  const interactionPerson = people[1];
+  const interactionProject = demoProjects[0];
+  if (interactionPerson && interactionProject) {
+    const startDate = addDays(
+      getVisibleRange({ zoom: "week", anchorDate }, 1).startDate,
+      1
+    );
+    entries.push({
+      id: "interaction-entry",
+      personId: interactionPerson.id,
+      projectId: interactionProject.id,
+      kind: "allocation",
+      startDate,
+      endDate: addDays(startDate, 1),
+      hoursPerDay: 4,
+      title: interactionProject.name,
+      ...(interactionProject.customerName
+        ? { customerName: interactionProject.customerName }
+        : {}),
+      details: "Deterministic allocation for drag and resize verification"
     });
   }
   for (let index = 0; index < Math.min(personCount, 24); index += 5) {

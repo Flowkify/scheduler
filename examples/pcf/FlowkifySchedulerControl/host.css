@@ -1,6 +1,6 @@
 .fks-pcf-host {
   position: relative;
-  min-width: 960px;
+  min-width: 0;
   width: 100%;
 }
 
@@ -46,14 +46,25 @@
   background: rgb(15 23 42 / 38%);
 }
 
+.fks-host-backdrop--elevated {
+  z-index: 20001;
+}
+
 .fks-host-dialog {
-  width: min(440px, calc(100vw - 40px));
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   padding: 22px;
   border-radius: 14px;
   color: #18212f;
   background: white;
   box-shadow: 0 28px 70px rgb(15 23 42 / 26%);
   font: 13px/1.45 Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.fks-host-dialog--compact {
+  width: min(430px, calc(100vw - 24px));
+  padding: 18px;
 }
 
 .fks-host-dialog > header {
@@ -68,42 +79,397 @@
   font-size: 19px;
 }
 
-.fks-host-dialog > header button {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 7px;
-  background: #f1f5f9;
-  cursor: pointer;
-  font-size: 20px;
-}
-
 .fks-host-dialog label {
   display: block;
-  margin-top: 14px;
   color: #697386;
   font-size: 11px;
   font-weight: 700;
 }
 
 .fks-host-dialog select,
-.fks-host-dialog input {
+.fks-host-dialog input,
+.fks-host-dialog textarea {
+  box-sizing: border-box;
   width: 100%;
-  height: 40px;
   margin-top: 5px;
-  padding: 0 10px;
+  padding: 9px 10px;
   border: 1px solid #d7dce3;
   border-radius: 8px;
   color: #18212f;
   background: white;
+  font: inherit;
 }
 
-.fks-host-dialog__range {
-  padding: 10px;
-  border-radius: 8px;
+.fks-host-dialog select,
+.fks-host-dialog input {
+  height: 40px;
+}
+
+.fks-host-dialog textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.fks-host-dialog select:focus,
+.fks-host-dialog input:focus,
+.fks-host-dialog textarea:focus {
+  border-color: #5a67d8;
+  outline: 3px solid rgb(90 103 216 / 14%);
+}
+
+.fks-host-dialog [aria-invalid="true"] {
+  border-color: #c2414a;
+}
+
+.fks-host-dialog label > span {
   color: #475569;
+}
+
+.fks-host-dialog label b {
+  color: #c2414a;
+}
+
+.fks-host-dialog label small {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.fks-allocation-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.fks-allocation-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: #7c6ee6;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.fks-allocation-summary > div strong,
+.fks-allocation-summary > div span {
+  display: block;
+}
+
+.fks-allocation-summary > div span {
+  color: #697386;
+  font-size: 11px;
+}
+
+.fks-allocation-form {
+  display: grid;
+  gap: 12px;
+}
+
+.fks-allocation-form > label,
+.fks-allocation-form__dates > label,
+.fks-host-combobox > label {
+  margin: 0;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.fks-allocation-form label small {
+  display: inline;
+  margin: 0;
+  color: #94a3b8;
+  font-weight: 600;
+  text-align: inherit;
+  text-transform: none;
+}
+
+.fks-allocation-form__dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.fks-allocation-hours {
+  display: flex;
+  align-items: stretch;
+  width: min(210px, 100%);
+  margin-top: 5px;
+}
+
+.fks-allocation-hours input {
+  width: 72px;
+  margin-top: 0;
+  border-radius: 8px 0 0 8px;
+}
+
+.fks-allocation-hours__unit {
+  display: grid;
+  place-items: center;
+  padding: 0 11px;
+  border: 1px solid #c9c4f4;
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  color: #5145cd;
+  background: #f4f2ff;
+  font-size: 11px;
+}
+
+.fks-host-combobox {
+  position: relative;
+}
+
+.fks-host-combobox > label {
+  display: block;
+}
+
+.fks-host-combobox__input {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  gap: 8px;
+  margin-top: 5px;
+  padding: 0 10px;
+  border: 1px solid #d7dce3;
+  border-radius: 8px;
+  background: white;
+}
+
+.fks-host-combobox__input:focus-within {
+  border-color: #5a67d8;
+  outline: 3px solid rgb(90 103 216 / 14%);
+}
+
+.fks-host-combobox__input > i,
+.fks-host-combobox__menu button > i {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 2px;
+}
+
+.fks-host-dialog .fks-host-combobox__input input {
+  width: auto;
+  min-width: 0;
+  flex: 1;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+}
+
+.fks-host-combobox__input > span {
+  margin-left: auto;
+  color: #94a3b8;
+}
+
+.fks-host-combobox__menu {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  display: block;
+  max-height: 220px;
+  padding: 5px;
+  overflow: auto;
+  border: 1px solid #d7dce3;
+  border-radius: 9px;
+  background: white;
+  box-shadow: 0 14px 34px rgb(15 23 42 / 16%);
+}
+
+.fks-host-combobox__menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.fks-host-combobox__menu button:hover,
+.fks-host-combobox__menu button[aria-selected="true"] {
   background: #f8fafc;
-  font-variant-numeric: tabular-nums;
+}
+
+.fks-host-combobox__menu strong,
+.fks-host-combobox__menu small {
+  display: block;
+}
+
+.fks-host-combobox__menu small {
+  color: #697386;
+  font-size: 10px;
+}
+
+.fks-host-combobox__empty {
+  display: block;
+  padding: 16px;
+  text-align: center;
+  color: #697386;
+}
+
+.fks-recurrence-control {
+  display: grid;
+  gap: 12px;
+  padding-top: 13px;
+  border-top: 1px solid #eef1f5;
+}
+
+.fks-recurrence-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fks-recurrence-toggle strong,
+.fks-recurrence-toggle small {
+  display: block;
+}
+
+.fks-recurrence-toggle strong {
+  color: #18212f;
+  font-size: 12px;
+}
+
+.fks-recurrence-toggle small {
+  margin-top: 2px;
+  color: #697386;
+  font-size: 10px;
+}
+
+.fks-recurrence-toggle button {
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: #cbd5e1;
+  cursor: pointer;
+}
+
+.fks-recurrence-toggle button > span {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 25%);
+  transition: transform 120ms ease;
+}
+
+.fks-recurrence-toggle button[aria-checked="true"] {
+  background: #7669e6;
+}
+
+.fks-recurrence-toggle button[aria-checked="true"] > span {
+  transform: translateX(16px);
+}
+
+.fks-allocation-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 14px;
+  border-top: 1px solid #eef1f5;
+}
+
+.fks-allocation-form__actions button {
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid #d7dce3;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.fks-allocation-form__actions .fks-host-primary {
+  border-color: #7669e6;
+  color: white;
+  background: #7669e6;
+}
+
+.fks-allocation-form__actions .fks-host-delete-link {
+  margin-right: auto;
+  border-color: transparent;
+  color: #b13a43;
+  background: transparent;
+}
+
+.fks-host-delete-warning {
+  display: grid;
+  gap: 4px;
+  padding: 13px;
+  border: 1px solid #fecdd3;
+  border-radius: 10px;
+  color: #8f2932;
+  background: #fff7f7;
+}
+
+.fks-host-delete-warning span {
+  color: #6b3a3f;
+  font-size: 11px;
+}
+
+.fks-host-dialog__actions .fks-host-delete {
+  border-color: #b13a43;
+  color: white;
+  background: #b13a43;
+}
+
+.fks-host-dialog__intro {
+  margin: 10px 0 16px;
+  color: #475569;
+}
+
+.fks-host-series-badge {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #5145cd;
+  background: #eef2ff;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fks-host-dialog > header button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: #f1f5f9;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.fks-host-form-error {
+  margin: 2px 0 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  color: #9f2730;
+  background: #fff1f2;
 }
 
 .fks-host-dialog__actions {
@@ -113,8 +479,91 @@
   margin-top: 20px;
 }
 
-.fks-host-dialog__actions--stack {
-  flex-direction: column;
+.fks-host-scope-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.fks-host-scope-options > button {
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid #d7dce3;
+  border-radius: 10px;
+  text-align: left;
+  color: #18212f;
+  background: white;
+  cursor: pointer;
+}
+
+.fks-host-scope-options > button:only-child {
+  grid-column: 1 / -1;
+}
+
+.fks-host-scope-options strong,
+.fks-host-scope-options span {
+  display: block;
+}
+
+.fks-host-scope-options span {
+  margin-top: 3px;
+  color: #697386;
+  font-size: 11px;
+}
+
+.fks-host-scope-options .fks-host-primary {
+  border-color: #5a67d8;
+  color: #4338ca;
+  background: #f5f6ff;
+}
+
+.fks-host-scope-options .fks-host-danger {
+  border-color: #fecdd3;
+  color: #9f2730;
+  background: #fff7f7;
+}
+
+.fks-host-series-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.fks-host-series-link strong,
+.fks-host-series-link span {
+  display: block;
+}
+
+.fks-host-series-link span {
+  margin-top: 2px;
+  color: #697386;
+  font-size: 11px;
+}
+
+.fks-host-series-link button {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #4338ca;
+  background: white;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.fks-host-series-link button:disabled {
+  opacity: 0.55;
+}
+
+.fks-host-series-link p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #9f2730;
 }
 
 .fks-host-dialog__actions button {
@@ -159,5 +608,19 @@
   margin: 0;
   overflow-wrap: anywhere;
   font-weight: 650;
+}
+
+@media (max-width: 640px) {
+  .fks-host-dialog {
+    padding: 18px;
+  }
+
+  .fks-host-scope-options {
+    grid-template-columns: 1fr;
+  }
+
+  .fks-host-series-link {
+    grid-template-columns: 1fr;
+  }
 }
 

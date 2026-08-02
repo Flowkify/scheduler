@@ -4,7 +4,6 @@ import {
   eachDay,
   intersects,
   isWeekend,
-  type CreateDraft,
   type DailyCapacity,
   type EntryMutation,
   type ResizeMutation,
@@ -18,6 +17,26 @@ import { RangeCache } from "./rangeCache";
 
 type DataverseRow = Record<string, unknown>;
 export type MutationScope = "occurrence" | "series";
+
+export const RECURRENCE_OPTIONS = [
+  { value: 591210000, label: "Non-repeating" },
+  { value: 591210001, label: "Every week" },
+  { value: 591210002, label: "Every two weeks" },
+  { value: 591210003, label: "Every month" }
+] as const;
+
+export type RecurrencePattern = (typeof RECURRENCE_OPTIONS)[number]["value"];
+
+export interface AllocationCreateInput {
+  projectId: string;
+  personId: string;
+  notes: string;
+  startDate: string;
+  endDate: string;
+  hoursPerDay: number;
+  recurrencePattern: RecurrencePattern;
+  recurrenceEndDate?: string;
+}
 
 export interface FlowkifyEntryMetadata {
   source: "allocation" | "timeoff";
@@ -47,7 +66,10 @@ interface StaticData {
 }
 
 const FORMATTED = "@OData.Community.Display.V1.FormattedValue";
-const NON_REPEATING = 591210000;
+const NON_REPEATING = RECURRENCE_OPTIONS[0].value;
+const PERSON_BIND = "flowkify_Person@odata.bind";
+const ALLOCATION_COLUMNS =
+  "flowkify_allocationid,flowkify_name,flowkify_startdate,flowkify_enddate,flowkify_hoursperday,_flowkify_person_value,_flowkify_projectid_value,flowkify_recurrencepattern,flowkify_recurrenceenddate,_flowkify_rootallocationid_value";
 
 export class DataverseSchedulerRepository {
   private context: ComponentFramework.Context<IInputs>;
@@ -130,32 +152,103 @@ export class DataverseSchedulerRepository {
     };
   }
 
-  public async create(
-    draft: CreateDraft,
-    project: SchedulerProject,
-    hoursPerDay: number
-  ): Promise<void> {
+  public async create(input: AllocationCreateInput): Promise<void> {
+    const validationError = validateAllocationCreate(input);
+    if (validationError) throw new Error(validationError);
+    const notes = input.notes.trim() || `Allocation · ${input.startDate}`;
     const result = await this.context.webAPI.createRecord("flowkify_allocation", {
-      flowkify_name: `${project.name} · ${draft.startDate}`,
-      flowkify_startdate: draft.startDate,
-      flowkify_enddate: draft.endDate,
-      flowkify_hoursperday: hoursPerDay,
-      "flowkify_person@odata.bind": `/flowkify_persons(${draft.personId})`,
-      "flowkify_projectid@odata.bind": `/flowkify_projects(${project.id})`,
-      flowkify_recurrencepattern: NON_REPEATING
+      flowkify_name: notes,
+      flowkify_startdate: input.startDate,
+      flowkify_enddate: input.endDate,
+      flowkify_hoursperday: input.hoursPerDay,
+      [PERSON_BIND]: `/flowkify_persons(${input.personId})`,
+      "flowkify_projectid@odata.bind": `/flowkify_projects(${input.projectId})`,
+      flowkify_recurrencepattern: input.recurrencePattern,
+      ...(input.recurrenceEndDate
+        ? { flowkify_recurrenceenddate: input.recurrenceEndDate }
+        : {})
     });
+    if (input.recurrencePattern !== NON_REPEATING) {
+      this.allocations.invalidate();
+      return;
+    }
     this.allocations.upsert(this.fingerprint, [
       {
         flowkify_allocationid: result.id,
-        flowkify_name: `${project.name} · ${draft.startDate}`,
-        flowkify_startdate: draft.startDate,
-        flowkify_enddate: draft.endDate,
-        flowkify_hoursperday: hoursPerDay,
-        _flowkify_person_value: draft.personId,
-        _flowkify_projectid_value: project.id,
-        flowkify_recurrencepattern: NON_REPEATING
+        flowkify_name: notes,
+        flowkify_startdate: input.startDate,
+        flowkify_enddate: input.endDate,
+        flowkify_hoursperday: input.hoursPerDay,
+        _flowkify_person_value: input.personId,
+        _flowkify_projectid_value: input.projectId,
+        flowkify_recurrencepattern: input.recurrencePattern
       }
     ]);
+  }
+
+  public async updateAllocation(
+    entry: SchedulerEntry<FlowkifyEntryMetadata>,
+    input: AllocationCreateInput
+  ): Promise<void> {
+    const validationError = validateAllocationCreate(input);
+    if (validationError) throw new Error(validationError);
+    const metadata = entry.metadata;
+    if (!metadata || metadata.source !== "allocation")
+      throw new Error("Only allocations can be edited.");
+    const controlsSeries = !metadata.rootAllocationId;
+    const notes = input.notes.trim() || `Allocation · ${input.startDate}`;
+    const payload = {
+      flowkify_name: notes,
+      flowkify_startdate: input.startDate,
+      flowkify_enddate: input.endDate,
+      flowkify_hoursperday: input.hoursPerDay,
+      [PERSON_BIND]: `/flowkify_persons(${input.personId})`,
+      "flowkify_projectid@odata.bind": `/flowkify_projects(${input.projectId})`,
+      ...(controlsSeries
+        ? {
+            flowkify_recurrencepattern: input.recurrencePattern,
+            flowkify_recurrenceenddate:
+              input.recurrencePattern === NON_REPEATING
+                ? null
+                : input.recurrenceEndDate
+          }
+        : {})
+    };
+    await this.context.webAPI.updateRecord(
+      "flowkify_allocation",
+      metadata.occurrenceId,
+      payload
+    );
+    if (controlsSeries && (metadata.seriesId || input.recurrencePattern !== NON_REPEATING)) {
+      this.allocations.invalidate();
+      return;
+    }
+    this.allocations.patch(metadata.occurrenceId, (current) => ({
+      ...current,
+      flowkify_name: notes,
+      flowkify_startdate: input.startDate,
+      flowkify_enddate: input.endDate,
+      flowkify_hoursperday: input.hoursPerDay,
+      _flowkify_person_value: input.personId,
+      _flowkify_projectid_value: input.projectId,
+      ...(controlsSeries
+        ? {
+            flowkify_recurrencepattern: input.recurrencePattern,
+            flowkify_recurrenceenddate: input.recurrenceEndDate
+          }
+        : {})
+    }));
+  }
+
+  public async getAllocation(
+    id: string
+  ): Promise<SchedulerEntry<FlowkifyEntryMetadata>> {
+    const row = await this.context.webAPI.retrieveRecord(
+      "flowkify_allocation",
+      id,
+      `?$select=${ALLOCATION_COLUMNS}`
+    );
+    return mapAllocation(row as DataverseRow);
   }
 
   public async update(
@@ -168,17 +261,20 @@ export class DataverseSchedulerRepository {
     if (!metadata || metadata.source !== "allocation")
       throw new Error("Only allocations can be moved or resized.");
 
-    const rows =
-      scope === "series" && metadata.seriesId
-        ? await this.loadSeriesRows(metadata.seriesId)
-        : [
-            {
-              flowkify_allocationid: metadata.occurrenceId,
-              flowkify_startdate: mutation.previous.startDate,
-              flowkify_enddate: mutation.previous.endDate,
-              _flowkify_person_value: mutation.previous.personId
-            }
-          ];
+    const seriesId = scope === "series" ? metadata.seriesId : undefined;
+    const rows = seriesId
+      ? (await this.loadSeriesRows(seriesId)).filter(
+          (row) => text(row, "flowkify_allocationid") === seriesId
+        )
+      : [
+          {
+            flowkify_allocationid: metadata.occurrenceId,
+            flowkify_startdate: mutation.previous.startDate,
+            flowkify_enddate: mutation.previous.endDate,
+            _flowkify_person_value: mutation.previous.personId
+          }
+        ];
+    if (!rows.length) throw new Error("The root allocation could not be found.");
     const startDelta = daysBetween(
       mutation.previous.startDate,
       mutation.proposed.startDate
@@ -204,14 +300,16 @@ export class DataverseSchedulerRepository {
         {
           flowkify_startdate: text(row, "flowkify_startdate"),
           flowkify_enddate: text(row, "flowkify_enddate"),
-          "flowkify_person@odata.bind": `/flowkify_persons(${mutation.proposed.personId})`
+          [PERSON_BIND]: `/flowkify_persons(${mutation.proposed.personId})`
         }
       );
-      this.allocations.patch(
-        text(row, "flowkify_allocationid"),
-        (current) => ({ ...current, ...row })
-      );
+      if (!seriesId)
+        this.allocations.patch(
+          text(row, "flowkify_allocationid"),
+          (current) => ({ ...current, ...row })
+        );
     }
+    if (seriesId) this.allocations.invalidate();
   }
 
   public async delete(
@@ -221,15 +319,21 @@ export class DataverseSchedulerRepository {
     const metadata = entry.metadata;
     if (!metadata || metadata.source !== "allocation")
       throw new Error("Only allocations can be deleted.");
-    const ids =
+    let ids =
       scope === "series" && metadata.seriesId
         ? (await this.loadSeriesRows(metadata.seriesId)).map((row) =>
             text(row, "flowkify_allocationid")
           )
         : [metadata.occurrenceId];
+    if (scope === "series" && metadata.seriesId) {
+      const rootId = metadata.seriesId;
+      ids = ids.filter((id) => id !== rootId);
+      ids.push(rootId);
+    }
     for (const id of ids)
       await this.context.webAPI.deleteRecord("flowkify_allocation", id);
-    this.allocations.remove(ids);
+    if (scope === "series") this.allocations.invalidate();
+    else this.allocations.remove(ids);
   }
 
   private async loadStaticData(): Promise<StaticData> {
@@ -244,26 +348,7 @@ export class DataverseSchedulerRepository {
       )
     ]);
     return {
-      people: peopleRows.map((row) => {
-        const name =
-          text(row, "flowkify_name") ||
-          `${text(row, "flowkify_firstname")} ${text(
-            row,
-            "flowkify_lastname"
-          )}`.trim();
-        const employmentEndDate =
-          date(row, "flowkify_enddate") || undefined;
-        return {
-          id: text(row, "flowkify_personid"),
-          name,
-          secondaryText: text(row, "flowkify_jobtitle") || "Team member",
-          metadata: {
-            weeklyHours: number(row, "flowkify_workhoursperweek"),
-            employmentStartDate: date(row, "flowkify_startdate"),
-            ...(employmentEndDate ? { employmentEndDate } : {})
-          }
-        };
-      }),
+      people: peopleRows.map(mapPerson).filter(hasPlanningCapacity),
       projects: projectRows.map((row) => {
         const customerName = formatted(row, "_flowkify_customerid_value");
         return {
@@ -282,7 +367,7 @@ export class DataverseSchedulerRepository {
   private loadAllocations(range: VisibleRange): Promise<DataverseRow[]> {
     return this.retrieveAll(
       "flowkify_allocation",
-      `?$select=flowkify_allocationid,flowkify_name,flowkify_startdate,flowkify_enddate,flowkify_hoursperday,_flowkify_person_value,_flowkify_projectid_value,flowkify_recurrencepattern,flowkify_recurrenceenddate,_flowkify_rootallocationid_value&$filter=statecode eq 0 and flowkify_startdate le ${range.endDate} and flowkify_enddate ge ${range.startDate}`
+      `?$select=${ALLOCATION_COLUMNS}&$filter=statecode eq 0 and flowkify_startdate le ${range.endDate} and flowkify_enddate ge ${range.startDate}`
     );
   }
 
@@ -328,6 +413,27 @@ export class DataverseSchedulerRepository {
     }
     return rows;
   }
+}
+
+export function validateAllocationCreate(
+  input: AllocationCreateInput
+): string | undefined {
+  if (!input.projectId) return "Choose a project.";
+  if (!input.personId) return "Choose a person.";
+  if (input.notes.trim().length > 100)
+    return "Notes cannot exceed 100 characters.";
+  if (!input.startDate || !input.endDate) return "Enter a start and end date.";
+  if (input.endDate < input.startDate)
+    return "End date must be on or after the start date.";
+  if (!Number.isFinite(input.hoursPerDay) || input.hoursPerDay <= 0)
+    return "Hours per day must be greater than zero.";
+  if (input.hoursPerDay > 24) return "Hours per day cannot exceed 24.";
+  if (
+    input.recurrencePattern !== NON_REPEATING &&
+    (!input.recurrenceEndDate || input.recurrenceEndDate < input.endDate)
+  )
+    return "Recurrence must end on or after the allocation end date.";
+  return undefined;
 }
 
 function mapAllocation(
@@ -382,7 +488,39 @@ function mapTimeOff(
   };
 }
 
-function buildAvailableCapacity(
+export function mapPerson(
+  row: DataverseRow
+): SchedulerPerson<FlowkifyPersonMetadata> {
+  const fullName =
+    text(row, "flowkify_name") ||
+    `${text(row, "flowkify_firstname")} ${text(
+      row,
+      "flowkify_lastname"
+    )}`.trim();
+  const displayName =
+    text(row, "flowkify_firstname").trim() ||
+    fullName.trim().split(/\s+/)[0] ||
+    "Unnamed";
+  const employmentEndDate = date(row, "flowkify_enddate") || undefined;
+  return {
+    id: text(row, "flowkify_personid"),
+    name: fullName || displayName,
+    displayName,
+    metadata: {
+      weeklyHours: number(row, "flowkify_workhoursperweek"),
+      employmentStartDate: date(row, "flowkify_startdate"),
+      ...(employmentEndDate ? { employmentEndDate } : {})
+    }
+  };
+}
+
+export function hasPlanningCapacity(
+  person: SchedulerPerson<FlowkifyPersonMetadata>
+): boolean {
+  return (person.metadata?.weeklyHours ?? 0) > 0;
+}
+
+export function buildAvailableCapacity(
   people: readonly SchedulerPerson<FlowkifyPersonMetadata>[],
   absences: readonly SchedulerEntry<FlowkifyEntryMetadata>[],
   holidays: ReadonlySet<string>,

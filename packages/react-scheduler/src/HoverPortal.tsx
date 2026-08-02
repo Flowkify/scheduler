@@ -6,7 +6,8 @@ interface OverlayPortalProps {
   children: ReactNode;
   className: string;
   onDismiss: () => void;
-  role?: "dialog" | "tooltip";
+  role?: "dialog" | "menu" | "tooltip";
+  width?: number;
 }
 
 export function OverlayPortal({
@@ -14,7 +15,8 @@ export function OverlayPortal({
   children,
   className,
   onDismiss,
-  role = "dialog"
+  role = "dialog",
+  width = 304
 }: OverlayPortalProps): JSX.Element {
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
@@ -32,7 +34,6 @@ export function OverlayPortal({
     };
   }, [className, onDismiss]);
 
-  const width = 304;
   const margin = 12;
   const left = Math.max(
     margin,

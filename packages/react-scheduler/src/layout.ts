@@ -1,7 +1,9 @@
 import { eachDay, intersects, toDayIndex } from "./date";
 import type {
+  CapacityStatus,
   DailyCapacity,
   DateKey,
+  PeriodCapacitySummary,
   SchedulerEntry,
   VisibleRange
 } from "./types";
@@ -14,14 +16,15 @@ export interface PackedEntry<TMeta = unknown> {
 export interface PackedEntries<TMeta = unknown> {
   visible: PackedEntry<TMeta>[];
   overflow: SchedulerEntry<TMeta>[];
+  laneCount: number;
 }
 
 export function packEntries<TMeta>(
   entries: readonly SchedulerEntry<TMeta>[],
   range: VisibleRange,
-  maxLanes = 2
+  maxLanes = 3
 ): PackedEntries<TMeta> {
-  const laneEnds = Array.from({ length: maxLanes }, () => -Infinity);
+  const laneEnds: number[] = [];
   const visible: PackedEntry<TMeta>[] = [];
   const overflow: SchedulerEntry<TMeta>[] = [];
   const sorted = entries
@@ -37,22 +40,34 @@ export function packEntries<TMeta>(
   for (const entry of sorted) {
     const start = toDayIndex(entry.startDate);
     const end = toDayIndex(entry.endDate);
-    const lane = laneEnds.findIndex((laneEnd) => laneEnd < start);
+    let lane = laneEnds.findIndex((laneEnd) => laneEnd < start);
     if (lane === -1) {
-      overflow.push(entry);
+      lane = laneEnds.length;
+      laneEnds.push(end);
     } else {
       laneEnds[lane] = end;
+    }
+    if (lane < maxLanes) {
       visible.push({ entry, lane });
+    } else {
+      overflow.push(entry);
     }
   }
-  return { visible, overflow };
+  return { visible, overflow, laneCount: laneEnds.length };
 }
 
 export interface CapacityState {
   available: number;
   allocated: number;
   ratio: number;
-  status: "empty" | "under" | "full" | "over";
+  status: CapacityStatus;
+}
+
+function capacityStatus(available: number, allocated: number): CapacityStatus {
+  if (available <= 0 && allocated <= 0) return "unavailable";
+  if (available <= 0 || allocated / available > 1.001) return "over";
+  if (allocated / available < 0.999) return "under";
+  return "full";
 }
 
 export function buildCapacityMap(
@@ -60,37 +75,82 @@ export function buildCapacityMap(
   entries: readonly SchedulerEntry[]
 ): Map<string, CapacityState> {
   const result = new Map<string, CapacityState>();
+  if (!capacity.length) return result;
   for (const item of capacity) {
     result.set(`${item.personId}:${item.date}`, {
       available: Math.max(0, item.hours),
       allocated: 0,
       ratio: 0,
-      status: item.hours <= 0 ? "empty" : "under"
+      status: item.hours <= 0 ? "unavailable" : "under"
     });
   }
   for (const entry of entries) {
     if (entry.kind === "absence") continue;
     for (const date of eachDay(entry)) {
       const key = `${entry.personId}:${date}`;
-      const state = result.get(key);
-      if (state) state.allocated += entry.hoursPerDay;
+      const state = result.get(key) ?? {
+        available: 0,
+        allocated: 0,
+        ratio: 0,
+        status: "unavailable" as const
+      };
+      state.allocated += entry.hoursPerDay;
+      result.set(key, state);
     }
   }
   for (const state of result.values()) {
     state.ratio =
       state.available === 0
         ? state.allocated > 0
-          ? 2
+          ? Number.POSITIVE_INFINITY
           : 0
         : state.allocated / state.available;
-    state.status =
-      state.available === 0 && state.allocated === 0
-        ? "empty"
-        : state.ratio < 0.999
-          ? "under"
-          : state.ratio <= 1.001
-            ? "full"
-            : "over";
+    state.status = capacityStatus(state.available, state.allocated);
+  }
+  return result;
+}
+
+export function buildPeriodCapacityMap(
+  capacity: readonly DailyCapacity[],
+  entries: readonly SchedulerEntry[],
+  range: VisibleRange,
+  personIds: readonly string[] = []
+): Map<string, PeriodCapacitySummary> {
+  const result = new Map<string, PeriodCapacitySummary>();
+  if (!capacity.length) return result;
+  for (const personId of personIds) {
+    result.set(personId, {
+      available: 0,
+      allocated: 0,
+      ratio: 0,
+      status: "unavailable"
+    });
+  }
+  const daily = buildCapacityMap(capacity, entries);
+  for (const date of eachDay(range)) {
+    const suffix = `:${date}`;
+    for (const [key, state] of daily) {
+      if (!key.endsWith(suffix)) continue;
+      const personId = key.slice(0, -suffix.length);
+      const summary = result.get(personId) ?? {
+        available: 0,
+        allocated: 0,
+        ratio: 0,
+        status: "unavailable" as const
+      };
+      summary.available += state.available;
+      summary.allocated += state.allocated;
+      result.set(personId, summary);
+    }
+  }
+  for (const summary of result.values()) {
+    summary.ratio =
+      summary.available === 0
+        ? summary.allocated > 0
+          ? Number.POSITIVE_INFINITY
+          : 0
+        : summary.allocated / summary.available;
+    summary.status = capacityStatus(summary.available, summary.allocated);
   }
   return result;
 }
@@ -132,7 +192,12 @@ export function filterPeopleAndEntries<TEntryMeta>(
   personIds: readonly string[],
   projectIds: readonly string[],
   query: string,
-  people: readonly { id: string; name: string; secondaryText?: string }[],
+  people: readonly {
+    id: string;
+    name: string;
+    displayName?: string;
+    secondaryText?: string;
+  }[],
   entries: readonly SchedulerEntry<TEntryMeta>[]
 ): {
   personIdSet: Set<string>;
@@ -147,7 +212,7 @@ export function filterPeopleAndEntries<TEntryMeta>(
         (person) =>
           (!selectedPeople.size || selectedPeople.has(person.id)) &&
           (!normalizedQuery ||
-            `${person.name} ${person.secondaryText ?? ""}`
+            `${person.name} ${person.displayName ?? ""} ${person.secondaryText ?? ""}`
               .toLocaleLowerCase()
               .includes(normalizedQuery))
       )

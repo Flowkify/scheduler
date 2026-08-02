@@ -3,10 +3,16 @@ import type { CSSProperties, ReactNode } from "react";
 export type DateKey = string;
 export type SchedulerZoom = "day" | "week" | "month";
 export type EntryVariant = "solid" | "striped" | "outline";
+export type CapacityStatus = "under" | "full" | "over" | "unavailable";
+export type SchedulerPeopleSort =
+  | "name-asc"
+  | "capacity-asc"
+  | "capacity-desc";
 
 export interface SchedulerPerson<TMeta = unknown> {
   id: string;
   name: string;
+  displayName?: string;
   secondaryText?: string;
   avatarUrl?: string;
   metadata?: TMeta;
@@ -54,6 +60,8 @@ export interface SchedulerFilters {
   query: string;
   personIds: readonly string[];
   projectIds: readonly string[];
+  capacityStatuses?: readonly CapacityStatus[];
+  peopleSort?: SchedulerPeopleSort;
 }
 
 export interface VisibleRange {
@@ -64,6 +72,14 @@ export interface VisibleRange {
 export interface MutationDecision {
   accepted: boolean;
   reason?: string;
+  silent?: boolean;
+}
+
+export interface PeriodCapacitySummary {
+  available: number;
+  allocated: number;
+  ratio: number;
+  status: CapacityStatus;
 }
 
 export interface EntryMutation<TMeta = unknown> {
@@ -133,6 +149,10 @@ export interface SchedulerProps<
   locale?: string;
   weekStartsOn?: 0 | 1;
   density?: "compact" | "comfortable";
+  personColumnWidth?: number;
+  collapsedLaneCount?: number;
+  showWeekends?: boolean;
+  onShowWeekendsChange?: (showWeekends: boolean) => void;
   status?: "ready" | "loading" | "error";
   errorMessage?: string;
   className?: string;

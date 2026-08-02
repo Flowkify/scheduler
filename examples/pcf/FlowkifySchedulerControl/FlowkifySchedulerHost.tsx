@@ -10,26 +10,37 @@ import {
   type SchedulerFilters,
   type SchedulerProject,
   type SchedulerViewport,
+  type SchedulerZoom,
   type VisibleRange
 } from "@flowkify/scheduler";
 import "@flowkify/scheduler/styles.css";
 import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  type AllocationCreateInput,
   DataverseSchedulerRepository,
   type FlowkifyEntryMetadata,
   type LoadedSchedule,
-  type MutationScope
+  type MutationScope,
+  RECURRENCE_OPTIONS,
+  type RecurrencePattern,
+  validateAllocationCreate
 } from "./DataverseSchedulerRepository";
 import "./host.css";
 
 export interface FlowkifySchedulerHostProps {
   repository: DataverseSchedulerRepository;
   height: number;
+  defaultZoom: SchedulerZoom;
   onEntrySelected: (entryId: string) => void;
 }
 
 interface ScopePrompt {
+  entry: SchedulerEntry<FlowkifyEntryMetadata>;
+  resolve: (scope: MutationScope | "cancel") => void;
+}
+
+interface DeletePrompt {
   entry: SchedulerEntry<FlowkifyEntryMetadata>;
   resolve: (scope: MutationScope | "cancel") => void;
 }
@@ -49,6 +60,7 @@ const emptySchedule: LoadedSchedule = {
 export function FlowkifySchedulerHost({
   repository,
   height,
+  defaultZoom,
   onEntrySelected
 }: FlowkifySchedulerHostProps): JSX.Element {
   const [schedule, setSchedule] = useState(emptySchedule);
@@ -57,20 +69,34 @@ export function FlowkifySchedulerHost({
   );
   const [error, setError] = useState<string>();
   const [viewport, setViewport] = useState<SchedulerViewport>({
-    zoom: "month",
+    zoom: defaultZoom,
     anchorDate: todayKey()
   });
   const [filters, setFilters] = useState<SchedulerFilters>({
     query: "",
     personIds: [],
-    projectIds: []
+    projectIds: [],
+    capacityStatuses: [],
+    peopleSort: "name-asc"
   });
+  const [showWeekends, setShowWeekends] = useState(false);
   const [scopePrompt, setScopePrompt] = useState<ScopePrompt>();
+  const [deletePrompt, setDeletePrompt] = useState<DeletePrompt>();
   const [createPrompt, setCreatePrompt] = useState<CreatePrompt>();
   const [opened, setOpened] =
     useState<SchedulerEntry<FlowkifyEntryMetadata>>();
   const requestGeneration = useRef(0);
+  const previousDefaultZoom = useRef(defaultZoom);
   const range = getVisibleRange(viewport);
+
+  useEffect(() => {
+    if (previousDefaultZoom.current === defaultZoom) return;
+    const previous = previousDefaultZoom.current;
+    previousDefaultZoom.current = defaultZoom;
+    setViewport((current) =>
+      applyDefaultZoomChange(current, previous, defaultZoom, todayKey())
+    );
+  }, [defaultZoom]);
 
   const reload = useCallback(
     async (requestedRange: VisibleRange): Promise<boolean> => {
@@ -102,12 +128,18 @@ export function FlowkifySchedulerHost({
   }, [range.startDate, range.endDate, reload]);
 
   const chooseScope = useCallback(
-    (
-      entry: SchedulerEntry<FlowkifyEntryMetadata>
-    ): Promise<MutationScope | "cancel"> => {
+    (entry: SchedulerEntry<FlowkifyEntryMetadata>): Promise<MutationScope | "cancel"> => {
       if (!entry.metadata?.seriesId) return Promise.resolve("occurrence");
       return new Promise((resolve) => setScopePrompt({ entry, resolve }));
     },
+    []
+  );
+
+  const confirmDelete = useCallback(
+    (entry: SchedulerEntry<FlowkifyEntryMetadata>) =>
+      new Promise<MutationScope | "cancel">((resolve) =>
+        setDeletePrompt({ entry, resolve })
+      ),
     []
   );
 
@@ -118,7 +150,7 @@ export function FlowkifySchedulerHost({
         | ResizeMutation<FlowkifyEntryMetadata>
     ): Promise<MutationDecision> => {
       const scope = await chooseScope(mutation.entry);
-      if (scope === "cancel") return { accepted: false };
+      if (scope === "cancel") return { accepted: false, silent: true };
       try {
         await repository.update(mutation, scope);
         await reload(range);
@@ -138,8 +170,8 @@ export function FlowkifySchedulerHost({
     async (
       entry: SchedulerEntry<FlowkifyEntryMetadata>
     ): Promise<MutationDecision> => {
-      const scope = await chooseScope(entry);
-      if (scope === "cancel") return { accepted: false };
+      const scope = await confirmDelete(entry);
+      if (scope === "cancel") return { accepted: false, silent: true };
       try {
         await repository.delete(entry, scope);
         await reload(range);
@@ -154,7 +186,7 @@ export function FlowkifySchedulerHost({
         };
       }
     },
-    [chooseScope, range, reload, repository]
+    [confirmDelete, range, reload, repository]
   );
 
   const requestCreate = useCallback(
@@ -163,9 +195,26 @@ export function FlowkifySchedulerHost({
     []
   );
 
+  const openSeries = useCallback(
+    async (id: string) => {
+      const entry =
+        schedule.entries.find(
+          (candidate) => candidate.metadata?.occurrenceId === id
+        ) ?? (await repository.getAllocation(id));
+      setOpened(entry);
+      onEntrySelected(entry.id);
+    },
+    [onEntrySelected, repository, schedule.entries]
+  );
+
   const closeScope = (choice: MutationScope | "cancel") => {
     scopePrompt?.resolve(choice);
     setScopePrompt(undefined);
+  };
+
+  const closeDelete = (choice: MutationScope | "cancel") => {
+    deletePrompt?.resolve(choice);
+    setDeletePrompt(undefined);
   };
 
   return (
@@ -178,6 +227,9 @@ export function FlowkifySchedulerHost({
         viewport={viewport}
         filters={filters}
         status={status}
+        personColumnWidth={180}
+        showWeekends={showWeekends}
+        onShowWeekendsChange={setShowWeekends}
         errorMessage={error ?? "Dataverse could not load the schedule."}
         onViewportChange={setViewport}
         onFiltersChange={setFilters}
@@ -193,7 +245,7 @@ export function FlowkifySchedulerHost({
           <div className="fks-pcf-hover">
             <span>{entry.kind === "absence" ? "Absence" : project?.customerName}</span>
             <strong>{entry.title ?? project?.name}</strong>
-            <p>{entry.details ?? "Open the entry for Dataverse details."}</p>
+            {entry.details && <p>{entry.details}</p>}
             <footer>
               <b>{entry.hoursPerDay}h/day</b>
               {entry.metadata?.seriesId && <span>Recurring</span>}
@@ -202,56 +254,66 @@ export function FlowkifySchedulerHost({
         )}
       />
       {scopePrompt && (
-        <HostDialog
-          title="Change recurring allocation?"
-          onDismiss={() => closeScope("cancel")}
-        >
-          <p>
-            <strong>{scopePrompt.entry.title}</strong> belongs to a recurring
-            series. Choose which records Dataverse should change.
-          </p>
-          <div className="fks-host-dialog__actions fks-host-dialog__actions--stack">
-            <button type="button" onClick={() => closeScope("occurrence")}>
-              This occurrence
-            </button>
-            <button
-              type="button"
-              className="fks-host-primary"
-              onClick={() => closeScope("series")}
-            >
-              Entire series
-            </button>
-          </div>
-        </HostDialog>
+        <RecurringScopeDialog
+          prompt={scopePrompt}
+          onChoose={closeScope}
+          onOpenSeries={openSeries}
+        />
+      )}
+      {deletePrompt && (
+        <DeleteAllocationDialog
+          prompt={deletePrompt}
+          onChoose={closeDelete}
+        />
       )}
       {createPrompt && (
-        <CreateDialog
-          draft={createPrompt.draft}
+        <AllocationDialog
+          mode="create"
+          initial={{
+            projectId: "",
+            personId: createPrompt.draft.personId,
+            notes: "",
+            startDate: createPrompt.draft.startDate,
+            endDate: createPrompt.draft.endDate,
+            hoursPerDay: 8,
+            recurrencePattern: RECURRENCE_OPTIONS[0].value
+          }}
+          people={schedule.people}
           projects={schedule.projects}
           onCancel={() => {
-            createPrompt.resolve({ accepted: false });
+            createPrompt.resolve({ accepted: false, silent: true });
             setCreatePrompt(undefined);
           }}
-          onSubmit={async (project, hours) => {
-            try {
-              await repository.create(createPrompt.draft, project, hours);
-              await reload(range);
-              createPrompt.resolve({ accepted: true });
-            } catch (reason) {
-              createPrompt.resolve({
-                accepted: false,
-                reason:
-                  reason instanceof Error
-                    ? reason.message
-                    : "Dataverse rejected the allocation."
-              });
-            } finally {
-              setCreatePrompt(undefined);
-            }
+          onSubmit={async (input) => {
+            await repository.create(input);
+            await reload(range);
+            createPrompt.resolve({ accepted: true });
+            setCreatePrompt(undefined);
           }}
         />
       )}
-      {opened && (
+      {opened?.metadata?.source === "allocation" && (
+        <AllocationDialog
+          key={opened.id}
+          mode="edit"
+          entry={opened}
+          initial={allocationInputFromEntry(opened)}
+          people={schedule.people}
+          projects={schedule.projects}
+          onCancel={() => setOpened(undefined)}
+          onSubmit={async (input) => {
+            await repository.updateAllocation(opened, input);
+            await reload(range);
+            setOpened(undefined);
+          }}
+          onDelete={async () => {
+            const decision = await deleteEntry(opened);
+            if (decision.accepted) setOpened(undefined);
+          }}
+          onOpenSeries={openSeries}
+        />
+      )}
+      {opened?.metadata?.source !== "allocation" && opened && (
         <HostDialog
           title={opened.title ?? "Schedule entry"}
           onDismiss={() => setOpened(undefined)}
@@ -287,25 +349,219 @@ export function FlowkifySchedulerHost({
   );
 }
 
+export function applyDefaultZoomChange(
+  viewport: SchedulerViewport,
+  previousDefault: SchedulerZoom,
+  nextDefault: SchedulerZoom,
+  today: string
+): SchedulerViewport {
+  return previousDefault === nextDefault
+    ? viewport
+    : { zoom: nextDefault, anchorDate: today };
+}
+
+function seriesRootId(
+  entry: SchedulerEntry<FlowkifyEntryMetadata>
+): string | undefined {
+  return entry.metadata?.rootAllocationId ?? entry.metadata?.seriesId;
+}
+
+function RecurringScopeDialog({
+  prompt,
+  onChoose,
+  onOpenSeries
+}: {
+  prompt: ScopePrompt;
+  onChoose: (scope: MutationScope | "cancel") => void;
+  onOpenSeries: (id: string) => Promise<void>;
+}) {
+  const rootId = seriesRootId(prompt.entry);
+  const rootSelected = rootId === prompt.entry.metadata?.occurrenceId;
+  return (
+    <HostDialog
+      title="Update recurring allocation?"
+      onDismiss={() => onChoose("cancel")}
+    >
+      <span className="fks-host-series-badge">Recurring series</span>
+      <p className="fks-host-dialog__intro">
+        <strong>{prompt.entry.title}</strong>{" "}
+        {rootSelected
+          ? "is the root allocation that controls this series."
+          : "is one occurrence in a recurring series."}
+      </p>
+      <div className="fks-host-scope-options">
+        {!rootSelected && (
+          <button type="button" onClick={() => onChoose("occurrence")}>
+            <strong>Update this occurrence</strong>
+            <span>Only the selected dates are changed.</span>
+          </button>
+        )}
+        <button
+          type="button"
+          className="fks-host-primary"
+          onClick={() => onChoose("series")}
+        >
+          <strong>Update entire series</strong>
+          <span>Apply this change through the root allocation.</span>
+        </button>
+      </div>
+      {rootId && (
+        <SeriesLink
+          entry={prompt.entry}
+          onOpen={onOpenSeries}
+          onOpened={() => onChoose("cancel")}
+        />
+      )}
+    </HostDialog>
+  );
+}
+
+function DeleteAllocationDialog({
+  prompt,
+  onChoose
+}: {
+  prompt: DeletePrompt;
+  onChoose: (scope: MutationScope | "cancel") => void;
+}) {
+  const rootId = seriesRootId(prompt.entry);
+  const rootSelected = rootId === prompt.entry.metadata?.occurrenceId;
+  if (rootId && !rootSelected)
+    return (
+      <HostDialog
+        title="Delete recurring allocation?"
+        elevated
+        onDismiss={() => onChoose("cancel")}
+      >
+        <p className="fks-host-dialog__intro">
+          Choose whether to delete only this occurrence or the complete recurring
+          series.
+        </p>
+        <div className="fks-host-scope-options">
+          <button
+            type="button"
+            className="fks-host-danger"
+            onClick={() => onChoose("occurrence")}
+          >
+            <strong>Delete this occurrence</strong>
+            <span>The rest of the series remains scheduled.</span>
+          </button>
+          <button
+            type="button"
+            className="fks-host-danger"
+            onClick={() => onChoose("series")}
+          >
+            <strong>Delete entire series</strong>
+            <span>Remove the root and every generated occurrence.</span>
+          </button>
+        </div>
+        <div className="fks-host-dialog__actions">
+          <button type="button" onClick={() => onChoose("cancel")}>Cancel</button>
+        </div>
+      </HostDialog>
+    );
+  return (
+    <HostDialog
+      title={rootSelected ? "Delete recurring series?" : "Delete allocation?"}
+      elevated
+      onDismiss={() => onChoose("cancel")}
+    >
+      <div className="fks-host-delete-warning" role="alert">
+        <strong>
+          {rootSelected
+            ? "This action deletes the entire recurring series."
+            : "This action cannot be undone."}
+        </strong>
+        <span>
+          {rootSelected
+            ? "The root allocation and every generated occurrence will be permanently removed."
+            : `“${prompt.entry.title ?? "This allocation"}” will be permanently removed.`}
+        </span>
+      </div>
+      <div className="fks-host-dialog__actions">
+        <button type="button" onClick={() => onChoose("cancel")}>Cancel</button>
+        <button
+          type="button"
+          className="fks-host-delete"
+          onClick={() => onChoose(rootSelected ? "series" : "occurrence")}
+        >
+          {rootSelected ? "Delete entire series" : "Delete allocation"}
+        </button>
+      </div>
+    </HostDialog>
+  );
+}
+
+function SeriesLink({
+  entry,
+  onOpen,
+  onOpened
+}: {
+  entry: SchedulerEntry<FlowkifyEntryMetadata>;
+  onOpen: (id: string) => Promise<void>;
+  onOpened?: () => void;
+}) {
+  const rootId = seriesRootId(entry);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string>();
+  if (!rootId) return null;
+  return (
+    <aside className="fks-host-series-link">
+      <div>
+        <strong>Need to change the recurrence?</strong>
+        <span>Pattern and end date are managed on the root allocation.</span>
+      </div>
+      <button
+        type="button"
+        disabled={opening}
+        onClick={async () => {
+          setOpening(true);
+          setOpenError(undefined);
+          try {
+            await onOpen(rootId);
+            onOpened?.();
+          } catch (reason) {
+            setOpening(false);
+            setOpenError(
+              reason instanceof Error
+                ? reason.message
+                : "The recurring series could not be opened."
+            );
+          }
+        }}
+      >
+        {opening ? "Opening…" : "Edit recurring series"}
+      </button>
+      {openError && <p role="alert">{openError}</p>}
+    </aside>
+  );
+}
+
 function HostDialog({
   title,
   onDismiss,
+  compact = false,
+  elevated = false,
   children
 }: {
   title: string;
   onDismiss: () => void;
+  compact?: boolean;
+  elevated?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div
-      className="fks-host-backdrop"
+      className={`fks-host-backdrop${elevated ? " fks-host-backdrop--elevated" : ""}`}
       role="presentation"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onDismiss();
+      }}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) onDismiss();
       }}
     >
       <section
-        className="fks-host-dialog"
+        className={`fks-host-dialog${compact ? " fks-host-dialog--compact" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -322,69 +578,422 @@ function HostDialog({
   );
 }
 
-function CreateDialog({
-  draft,
+function AllocationDialog({
+  mode,
+  initial,
+  entry,
+  people,
   projects,
   onCancel,
-  onSubmit
+  onSubmit,
+  onDelete,
+  onOpenSeries
 }: {
-  draft: CreateDraft;
+  mode: "create" | "edit";
+  initial: AllocationCreateInput;
+  entry?: SchedulerEntry<FlowkifyEntryMetadata>;
+  people: LoadedSchedule["people"];
   projects: readonly SchedulerProject[];
   onCancel: () => void;
-  onSubmit: (project: SchedulerProject, hours: number) => Promise<void>;
+  onSubmit: (input: AllocationCreateInput) => Promise<void>;
+  onDelete?: () => Promise<void>;
+  onOpenSeries?: (id: string) => Promise<void>;
 }) {
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
-  const [hours, setHours] = useState(8);
+  const [projectId, setProjectId] = useState(initial.projectId);
+  const [personId, setPersonId] = useState(initial.personId);
+  const [notes, setNotes] = useState(initial.notes);
+  const [startDate, setStartDate] = useState(initial.startDate);
+  const [endDate, setEndDate] = useState(initial.endDate);
+  const [hours, setHours] = useState(initial.hoursPerDay);
+  const [recurrencePattern, setRecurrencePattern] =
+    useState<RecurrencePattern>(initial.recurrencePattern);
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState(
+    initial.recurrenceEndDate ?? ""
+  );
+  const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
-  const project = projects.find((candidate) => candidate.id === projectId);
+  const [submitError, setSubmitError] = useState<string>();
+  const selectedPerson = people.find((person) => person.id === personId);
+  const recurrenceEditable = !entry?.metadata?.rootAllocationId;
+  const repeating = recurrencePattern !== RECURRENCE_OPTIONS[0].value;
+  const input: AllocationCreateInput = {
+    projectId,
+    personId,
+    notes,
+    startDate,
+    endDate,
+    hoursPerDay: hours,
+    recurrencePattern,
+    ...(repeating ? { recurrenceEndDate } : {})
+  };
+  const validationError = validateAllocationCreate(input);
   return (
-    <HostDialog title="Create allocation" onDismiss={onCancel}>
-      <p className="fks-host-dialog__range">
-        {draft.startDate} – {draft.endDate}
-      </p>
-      <label>
-        Project
-        <select
-          value={projectId}
-          onChange={(event) => setProjectId(event.target.value)}
-          autoFocus
-        >
-          {projects.map((candidate) => (
-            <option key={candidate.id} value={candidate.id}>
-              {candidate.name}
-              {candidate.customerName ? ` · ${candidate.customerName}` : ""}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Hours per day
-        <input
-          type="number"
-          min={0.25}
-          max={24}
-          step={0.25}
-          value={hours}
-          onChange={(event) => setHours(Number(event.target.value))}
-        />
-      </label>
-      <div className="fks-host-dialog__actions">
-        <button type="button" onClick={onCancel} disabled={saving}>
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="fks-host-primary"
-          disabled={!project || hours <= 0 || saving}
-          onClick={async () => {
-            if (!project) return;
-            setSaving(true);
-            await onSubmit(project, hours);
-          }}
-        >
-          {saving ? "Creating…" : "Create allocation"}
-        </button>
+    <HostDialog
+      title={mode === "create" ? "Create allocation" : "Edit allocation"}
+      compact
+      onDismiss={() => {
+        if (!saving) onCancel();
+      }}
+    >
+      <div className="fks-allocation-summary">
+        <span className="fks-allocation-avatar" aria-hidden="true">
+          {initials(selectedPerson?.name ?? "Allocation")}
+        </span>
+        <div>
+          <strong>{selectedPerson?.name ?? "Select a person"}</strong>
+          <span>{formatAllocationRange(startDate, endDate)}</span>
+        </div>
       </div>
+      <form
+        className="fks-allocation-form"
+        aria-busy={saving}
+        noValidate
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setAttempted(true);
+          if (validationError) return;
+          setSaving(true);
+          setSubmitError(undefined);
+          try {
+            await onSubmit(input);
+          } catch (reason) {
+            setSaving(false);
+            setSubmitError(
+              reason instanceof Error
+                ? reason.message
+                : "Dataverse rejected the allocation."
+            );
+          }
+        }}
+      >
+        <SearchSelect
+          label="Project"
+          placeholder="Search projects or companies"
+          value={projectId}
+          required
+          invalid={attempted && !projectId}
+          options={projects.map((project) => ({
+            id: project.id,
+            label: project.name,
+            description: project.customerName,
+            color: project.accentColor
+          }))}
+          onChange={setProjectId}
+        />
+        <SearchSelect
+          label="Person"
+          placeholder="Search people"
+          value={personId}
+          required
+          invalid={attempted && !personId}
+          options={people.map((person) => ({
+            id: person.id,
+            label: person.name
+          }))}
+          onChange={setPersonId}
+        />
+        <label>
+          <span>Note <small>(optional)</small></span>
+          <input
+            value={notes}
+            maxLength={100}
+            onChange={(event) => setNotes(event.target.value)}
+            placeholder="What’s this for?"
+          />
+        </label>
+        <div className="fks-allocation-form__dates">
+          <label>
+            <span>Start</span>
+            <input
+              type="date"
+              lang="en-GB"
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+              aria-invalid={attempted && !startDate}
+              required
+            />
+          </label>
+          <label>
+            <span>End</span>
+            <input
+              type="date"
+              lang="en-GB"
+              min={startDate}
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              aria-invalid={attempted && (!endDate || endDate < startDate)}
+              required
+            />
+          </label>
+        </div>
+        <label>
+          <span>Allocation</span>
+          <span className="fks-allocation-hours">
+            <input
+              type="number"
+              min={0.25}
+              max={24}
+              step={0.25}
+              value={hours}
+              onChange={(event) => setHours(Number(event.target.value))}
+              aria-invalid={attempted && (hours <= 0 || hours > 24)}
+              required
+            />
+            <span className="fks-allocation-hours__unit">Hours/day</span>
+          </span>
+        </label>
+        {recurrenceEditable ? (
+          <div className="fks-recurrence-control">
+            <div className="fks-recurrence-toggle">
+              <span>
+                <strong>Repeat allocation</strong>
+                <small>{repeating ? "Recurring schedule enabled" : "No recurrence"}</small>
+              </span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={repeating}
+                aria-label="Repeat allocation"
+                onClick={() =>
+                  setRecurrencePattern(
+                    !repeating
+                      ? RECURRENCE_OPTIONS[1].value
+                      : RECURRENCE_OPTIONS[0].value
+                  )
+                }
+              >
+                <span aria-hidden="true" />
+              </button>
+            </div>
+            {repeating && (
+              <div className="fks-allocation-form__dates">
+                <label>
+                  <span>Pattern</span>
+                  <select
+                    value={recurrencePattern}
+                    onChange={(event) =>
+                      setRecurrencePattern(
+                        Number(event.target.value) as RecurrencePattern
+                      )
+                    }
+                  >
+                    {RECURRENCE_OPTIONS.slice(1).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Recurrence ends</span>
+                  <input
+                    type="date"
+                    lang="en-GB"
+                    min={endDate}
+                    value={recurrenceEndDate}
+                    onChange={(event) => setRecurrenceEndDate(event.target.value)}
+                    aria-invalid={
+                      attempted &&
+                      (!recurrenceEndDate || recurrenceEndDate < endDate)
+                    }
+                    required
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        ) : (
+          entry && onOpenSeries && (
+            <SeriesLink entry={entry} onOpen={onOpenSeries} />
+          )
+        )}
+        {(submitError || (attempted && validationError)) && (
+          <p className="fks-host-form-error" role="alert">
+            {submitError ?? validationError}
+          </p>
+        )}
+        <div className="fks-allocation-form__actions">
+          {mode === "edit" && onDelete && (
+            <button
+              type="button"
+              className="fks-host-delete-link"
+              onClick={() => void onDelete()}
+              disabled={saving}
+            >
+              Delete
+            </button>
+          )}
+          <button type="button" onClick={onCancel} disabled={saving}>Cancel</button>
+          <button type="submit" className="fks-host-primary" disabled={saving}>
+            {saving
+              ? "Saving…"
+              : mode === "create"
+                ? "Create allocation"
+                : "Save changes"}
+          </button>
+        </div>
+      </form>
     </HostDialog>
   );
+}
+
+interface SearchSelectOption {
+  id: string;
+  label: string;
+  description?: string;
+  color?: string;
+}
+
+function SearchSelect({
+  label,
+  placeholder,
+  value,
+  options,
+  required,
+  invalid,
+  onChange
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  options: readonly SearchSelectOption[];
+  required?: boolean;
+  invalid?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = options.find((option) => option.id === value);
+  const inputId = `fks-${label.toLocaleLowerCase()}-input`;
+  const optionsId = `fks-${label.toLocaleLowerCase()}-options`;
+  const normalized = query.trim().toLocaleLowerCase();
+  const matches = normalized
+    ? options.filter((option) =>
+        `${option.label} ${option.description ?? ""}`
+          .toLocaleLowerCase()
+          .includes(normalized)
+      )
+    : options;
+  return (
+    <div
+      className="fks-host-combobox"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <label htmlFor={inputId}>{label}{required && <b aria-hidden="true"> *</b>}</label>
+      <span className="fks-host-combobox__input">
+        {selected?.color && (
+          <i style={{ background: selected.color }} aria-hidden="true" />
+        )}
+        <input
+          id={inputId}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={optionsId}
+          aria-invalid={invalid}
+          value={open ? query : selected?.label ?? ""}
+          placeholder={placeholder}
+          onFocus={() => {
+            setQuery("");
+            setOpen(true);
+          }}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              event.currentTarget
+                .closest(".fks-host-combobox")
+                ?.querySelector<HTMLButtonElement>("[role='option']")
+                ?.focus();
+            }
+            if (event.key === "Enter" && open && matches[0]) {
+              event.preventDefault();
+              onChange(matches[0].id);
+              setOpen(false);
+            }
+          }}
+        />
+        <span aria-hidden="true">⌄</span>
+      </span>
+      {open && (
+        <span
+          id={optionsId}
+          className="fks-host-combobox__menu"
+          role="listbox"
+        >
+          {matches.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="option"
+              aria-selected={option.id === value}
+              onClick={() => {
+                onChange(option.id);
+                setOpen(false);
+              }}
+            >
+              <i style={{ background: option.color ?? "#7c6ee6" }} aria-hidden="true" />
+              <span>
+                <strong>{option.label}</strong>
+                {option.description && <small>{option.description}</small>}
+              </span>
+            </button>
+          ))}
+          {!matches.length && <small className="fks-host-combobox__empty">No matches found.</small>}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function allocationInputFromEntry(
+  entry: SchedulerEntry<FlowkifyEntryMetadata>
+): AllocationCreateInput {
+  const recurrencePattern = RECURRENCE_OPTIONS.some(
+    (option) => option.value === entry.metadata?.recurrencePattern
+  )
+    ? (entry.metadata?.recurrencePattern as RecurrencePattern)
+    : RECURRENCE_OPTIONS[0].value;
+  return {
+    projectId: entry.projectId ?? "",
+    personId: entry.personId,
+    notes: entry.title ?? "",
+    startDate: entry.startDate,
+    endDate: entry.endDate,
+    hoursPerDay: entry.hoursPerDay,
+    recurrencePattern,
+    ...(entry.metadata?.recurrenceEndDate
+      ? { recurrenceEndDate: entry.metadata.recurrenceEndDate }
+      : {})
+  };
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function formatAllocationRange(startDate: string, endDate: string): string {
+  if (!startDate || !endDate) return "Choose allocation dates";
+  const format = (value: string) =>
+    new Intl.DateTimeFormat("en-GB", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC"
+    }).format(new Date(`${value}T00:00:00Z`));
+  return startDate === endDate
+    ? format(startDate)
+    : `${format(startDate)} – ${format(endDate)}`;
 }

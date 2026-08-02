@@ -19,5 +19,9 @@ npm run build
 
 Dates use inclusive `YYYY-MM-DD` values. The component is controlled: hosts persist mutation requests, update `entries`, then resolve the callback.
 
+The PCF example starts on the current week by default and exposes a maker-facing
+Day/Week/Month startup setting. Its Dataverse adapter derives availability from
+weekly work hours, time off, public holidays, and employment dates.
+
 Licensed under Apache-2.0.
 

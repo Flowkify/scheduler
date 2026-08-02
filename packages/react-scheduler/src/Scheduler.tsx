@@ -17,17 +17,19 @@ import {
 } from "./date";
 import {
   buildCapacityMap,
+  buildPeriodCapacityMap,
   capacityKey,
   entryGeometry,
   filterPeopleAndEntries,
-  overflowGeometry,
   packEntries,
   type CapacityState
 } from "./layout";
 import type { InteractionState } from "./interaction";
 import type {
+  CapacityStatus,
   CreateDraft,
   EntryRenderContext,
+  PeriodCapacitySummary,
   SchedulerEntry,
   SchedulerFilters,
   SchedulerPerson,
@@ -37,12 +39,50 @@ import type {
   VisibleRange
 } from "./types";
 import { OverlayPortal } from "./HoverPortal";
-import { useFixedVirtualRows } from "./useFixedVirtualRows";
+import { useVariableVirtualRows } from "./useFixedVirtualRows";
 import { usePointerInteraction } from "./usePointerInteraction";
 import "./styles.css";
 
-const PERSON_COLUMN_WIDTH = 216;
+const DEFAULT_PERSON_COLUMN_WIDTH = 216;
 const MIN_DAY_WIDTH = { day: 240, week: 92, month: 34 } as const;
+const LANE_HEIGHT = { compact: 20, comfortable: 26 } as const;
+const ROW_PADDING = { compact: 8, comfortable: 10 } as const;
+
+export function getTimelineRange(
+  range: VisibleRange,
+  zoom: SchedulerViewport["zoom"],
+  showWeekends: boolean
+): VisibleRange {
+  if (zoom !== "week" || showWeekends) return range;
+  const weekdays = eachDay(range).filter((date) => !isWeekend(date));
+  return {
+    startDate: weekdays[0] ?? range.startDate,
+    endDate: weekdays[weekdays.length - 1] ?? range.endDate
+  };
+}
+
+function overlayAnchor(target: HTMLElement, rect: DOMRect): DOMRect {
+  let ancestor: HTMLElement | null = target.closest(".fks-root");
+  while (ancestor && ancestor !== document.body) {
+    const style = getComputedStyle(ancestor);
+    const transformed = [style.transform, style.perspective, style.filter].some(
+      (value) => value && value !== "none"
+    );
+    if (transformed || style.willChange.includes("transform")) {
+      const bounds = ancestor.getBoundingClientRect();
+      const scaleX = bounds.width / ancestor.offsetWidth || 1;
+      const scaleY = bounds.height / ancestor.offsetHeight || 1;
+      return new DOMRect(
+        (rect.left - bounds.left) / scaleX,
+        (rect.top - bounds.top) / scaleY,
+        rect.width / scaleX,
+        rect.height / scaleY
+      );
+    }
+    ancestor = ancestor.parentElement;
+  }
+  return rect;
+}
 
 type AnySchedulerProps = SchedulerProps<unknown, unknown, unknown>;
 
@@ -51,10 +91,12 @@ interface HoverState {
   anchor: DOMRect;
 }
 
-interface OverflowState {
-  person: SchedulerPerson;
-  entries: SchedulerEntry[];
-  anchor: DOMRect;
+type ContextMenuState = HoverState;
+
+interface SchedulerNotice {
+  id: number;
+  tone: "success" | "error";
+  message: string;
 }
 
 interface RowProps {
@@ -65,7 +107,12 @@ interface RowProps {
   days: string[];
   dayWidth: number;
   rowHeight: number;
+  laneHeight: number;
+  personColumnWidth: number;
+  collapsedLaneCount: number;
+  expanded: boolean;
   capacityMap: Map<string, CapacityState>;
+  capacitySummary?: PeriodCapacitySummary;
   pendingIds: Set<string>;
   createDraft?: CreateDraft;
   renderEntryContent?: AnySchedulerProps["renderEntryContent"];
@@ -74,13 +121,10 @@ interface RowProps {
   onStartCreate: ReturnType<typeof usePointerInteraction>["startCreate"];
   onHover: (entry: SchedulerEntry, anchor: DOMRect) => void;
   onHoverCancel: () => void;
+  onContextMenu: (entry: SchedulerEntry, anchor: DOMRect) => void;
   onOpen: (entry: SchedulerEntry) => void;
   onDelete: (entry: SchedulerEntry) => void;
-  onOverflow: (
-    person: SchedulerPerson,
-    entries: SchedulerEntry[],
-    anchor: DOMRect
-  ) => void;
+  onToggleExpanded: (personId: string) => void;
 }
 
 const SchedulerRow = memo(function SchedulerRow({
@@ -91,7 +135,12 @@ const SchedulerRow = memo(function SchedulerRow({
   days,
   dayWidth,
   rowHeight,
+  laneHeight,
+  personColumnWidth,
+  collapsedLaneCount,
+  expanded,
   capacityMap,
+  capacitySummary,
   pendingIds,
   createDraft,
   renderEntryContent,
@@ -100,22 +149,35 @@ const SchedulerRow = memo(function SchedulerRow({
   onStartCreate,
   onHover,
   onHoverCancel,
+  onContextMenu,
   onOpen,
   onDelete,
-  onOverflow
+  onToggleExpanded
 }: RowProps) {
-  const packed = packEntries(entries, range);
-  const overflow = overflowGeometry(packed.overflow, range, dayWidth);
+  const packed = packEntries(
+    entries,
+    range,
+    expanded ? Number.MAX_SAFE_INTEGER : collapsedLaneCount
+  );
+  const displayName = person.displayName ?? person.name;
+  const capacityFill = capacitySummary
+    ? Math.min(1, capacitySummary.ratio) * 100
+    : 0;
+  const capacityPercent = capacitySummary
+    ? Number.isFinite(capacitySummary.ratio)
+      ? `${Math.round(capacitySummary.ratio * 100)}%`
+      : ">100%"
+    : "—";
   return (
     <div
       className="fks-row"
       data-person-id={person.id}
-      style={{ height: rowHeight, width: PERSON_COLUMN_WIDTH + days.length * dayWidth }}
+      style={{ height: rowHeight, width: personColumnWidth + days.length * dayWidth }}
       role="row"
     >
       <div
         className="fks-person-cell"
-        style={{ width: PERSON_COLUMN_WIDTH }}
+        style={{ width: personColumnWidth }}
         role="rowheader"
       >
         {renderPersonCell ? (
@@ -134,16 +196,42 @@ const SchedulerRow = memo(function SchedulerRow({
               </span>
             )}
             <span className="fks-person-copy">
-              <strong>{person.name}</strong>
+              <strong title={person.name}>{displayName}</strong>
               {person.secondaryText && <small>{person.secondaryText}</small>}
             </span>
           </>
+        )}
+        {(packed.overflow.length > 0 || expanded) && (
+          <button
+            type="button"
+            className="fks-row-expander"
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Collapse" : "Expand"} allocations for ${person.name}`}
+            onClick={() => onToggleExpanded(person.id)}
+          >
+            <span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+            {!expanded && packed.overflow.length > 0 && (
+              <small>+{packed.overflow.length}</small>
+            )}
+          </button>
+        )}
+        {capacitySummary && (
+          <span
+            className={`fks-period-capacity fks-period-capacity--${capacitySummary.status}`}
+            title={`${capacitySummary.allocated}h scheduled of ${capacitySummary.available}h available (${capacityPercent})`}
+            aria-label={`${capacityPercent} capacity for ${person.name}`}
+          >
+            <span className="fks-period-capacity__bar" aria-hidden="true">
+              <span style={{ height: `${capacityFill}%` }} />
+            </span>
+            <small>{capacityPercent}</small>
+          </span>
         )}
       </div>
       <div
         className="fks-timeline-row"
         style={{
-          left: PERSON_COLUMN_WIDTH,
+          left: personColumnWidth,
           width: days.length * dayWidth,
           gridTemplateColumns: `repeat(${days.length}, ${dayWidth}px)`
         }}
@@ -158,7 +246,7 @@ const SchedulerRow = memo(function SchedulerRow({
               key={date}
               className={`fks-day-cell${isWeekend(date) ? " fks-day-cell--weekend" : ""}${
                 date === todayKey() ? " fks-day-cell--today" : ""
-              }${capacity?.status === "empty" ? " fks-day-cell--unavailable" : ""}`}
+              }${capacity?.status === "unavailable" ? " fks-day-cell--unavailable" : ""}`}
               data-date={date}
             >
               {capacity && (
@@ -202,19 +290,37 @@ const SchedulerRow = memo(function SchedulerRow({
               style={{
                 left: geometry.left + 2,
                 width: geometry.width - 4,
-                top: 4 + lane * ((rowHeight - 10) / 2),
-                height: (rowHeight - 14) / 2,
+                top: 4 + lane * laneHeight,
+                height: laneHeight - 4,
                 "--fks-entry-accent":
                   entry.appearance?.accentColor ??
                   project?.accentColor ??
                   "var(--fks-accent)"
               } as React.CSSProperties}
               onPointerDown={(event) => onStartEntry(event, entry, "move")}
-              onDoubleClick={() => onOpen(entry)}
               onMouseEnter={(event) =>
-                onHover(entry, event.currentTarget.getBoundingClientRect())
+                onHover(
+                  entry,
+                  overlayAnchor(
+                    event.currentTarget,
+                    new DOMRect(event.clientX, event.clientY, 0, 0)
+                  )
+                )
               }
               onMouseLeave={onHoverCancel}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onContextMenu(
+                  entry,
+                  overlayAnchor(
+                    event.currentTarget,
+                    event.clientX || event.clientY
+                      ? new DOMRect(event.clientX, event.clientY, 0, 0)
+                      : event.currentTarget.getBoundingClientRect()
+                  )
+                );
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") onOpen(entry);
                 if (
@@ -275,28 +381,11 @@ const SchedulerRow = memo(function SchedulerRow({
                 dayWidth
               ),
               top: 4,
-              height: (rowHeight - 14) / 2
+              height: laneHeight - 4
             }}
           >
             New allocation
           </div>
-        )}
-        {overflow && (
-          <button
-            type="button"
-            className="fks-overflow-button"
-            style={{ left: overflow.left + 4, width: Math.max(32, overflow.width - 8) }}
-            onClick={(event) =>
-              onOverflow(
-                person,
-                packed.overflow,
-                event.currentTarget.getBoundingClientRect()
-              )
-            }
-            aria-label={`Show ${packed.overflow.length} more entries for ${person.name}`}
-          >
-            +{packed.overflow.length}
-          </button>
         )}
       </div>
     </div>
@@ -327,43 +416,106 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
     locale = "en",
     weekStartsOn = 1,
     density = "compact",
+    personColumnWidth = DEFAULT_PERSON_COLUMN_WIDTH,
+    collapsedLaneCount = 3,
+    showWeekends = false,
+    onShowWeekendsChange,
     status = "ready",
     errorMessage = "The schedule could not be loaded.",
     ariaLabel = "Employee schedule"
   } = props;
   const hoverTimerRef = useRef<number>();
+  const noticeIdRef = useRef(0);
+  const noticeTimersRef = useRef(new Map<number, number>());
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(960);
-  const [openFilter, setOpenFilter] = useState<"people" | "projects" | null>(
-    null
-  );
+  const [openFilter, setOpenFilter] = useState<"filters" | "view" | null>(null);
+  const [filterSection, setFilterSection] = useState<
+    "people" | "projects" | "capacity" | "sort"
+  >("people");
+  const [peopleQuery, setPeopleQuery] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
   const [hover, setHover] = useState<HoverState | null>(null);
-  const [overflow, setOverflow] = useState<OverflowState | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [expandedPeople, setExpandedPeople] = useState<Set<string>>(new Set());
+  const [notices, setNotices] = useState<SchedulerNotice[]>([]);
   const [pendingPreviews, setPendingPreviews] = useState<
     Map<string, SchedulerEntry>
   >(new Map());
   const [pendingCreate, setPendingCreate] = useState<CreateDraft | undefined>();
-  const [message, setMessage] = useState<string>();
   const captureScrollElement = useCallback(
     (node: HTMLDivElement | null) => setScrollElement(node),
     []
+  );
+  const dismissNotice = useCallback((id: number) => {
+    const timer = noticeTimersRef.current.get(id);
+    if (timer) window.clearTimeout(timer);
+    noticeTimersRef.current.delete(id);
+    setNotices((current) => current.filter((notice) => notice.id !== id));
+  }, []);
+  const addNotice = useCallback(
+    (tone: SchedulerNotice["tone"], message: string) => {
+      const id = ++noticeIdRef.current;
+      setNotices((current) => [...current, { id, tone, message }].slice(-3));
+      if (tone === "success") {
+        const timer = window.setTimeout(() => dismissNotice(id), 4_000);
+        noticeTimersRef.current.set(id, timer);
+      }
+    },
+    [dismissNotice]
   );
 
   const range = useMemo(
     () => getVisibleRange(viewport, weekStartsOn),
     [viewport, weekStartsOn]
   );
-  const days = useMemo(() => eachDay(range), [range]);
-  const timelineAvailable = Math.max(320, containerWidth - PERSON_COLUMN_WIDTH);
+  const timelineRange = useMemo(
+    () => getTimelineRange(range, viewport.zoom, showWeekends),
+    [range, showWeekends, viewport.zoom]
+  );
+  const days = useMemo(() => eachDay(timelineRange), [timelineRange]);
+  const safeCollapsedLaneCount = Math.max(1, Math.floor(collapsedLaneCount));
+  const timelineAvailable = Math.max(320, containerWidth - personColumnWidth);
   const dayWidth = Math.max(
     MIN_DAY_WIDTH[viewport.zoom],
     timelineAvailable / Math.max(1, days.length)
   );
-  const rowHeight = density === "compact" ? 48 : 64;
+  const laneHeight = LANE_HEIGHT[density];
+  const rowPadding = ROW_PADDING[density];
   const projectsById = useMemo(
     () => new Map(projects.map((project) => [project.id, project])),
     [projects]
   );
+  const matchingPeople = useMemo(() => {
+    const query = peopleQuery.trim().toLocaleLowerCase(locale);
+    return query
+      ? people.filter((person) =>
+          `${person.name} ${person.displayName ?? ""}`
+            .toLocaleLowerCase(locale)
+            .includes(query)
+        )
+      : people;
+  }, [locale, people, peopleQuery]);
+  const matchingProjects = useMemo(() => {
+    const query = projectQuery.trim().toLocaleLowerCase(locale);
+    return query
+      ? projects.filter((project) =>
+          `${project.name} ${project.customerName ?? ""}`
+            .toLocaleLowerCase(locale)
+            .includes(query)
+        )
+      : projects;
+  }, [locale, projectQuery, projects]);
+  const activeFilterCount =
+    filters.personIds.length +
+    filters.projectIds.length +
+    (filters.capacityStatuses?.length ?? 0);
+  const effectiveAllEntries = useMemo(() => {
+    const previewIds = new Set(pendingPreviews.keys());
+    return entries
+      .filter((entry) => !previewIds.has(entry.id))
+      .concat(Array.from(pendingPreviews.values()));
+  }, [entries, pendingPreviews]);
   const filtered = useMemo(
     () =>
       filterPeopleAndEntries(
@@ -371,38 +523,69 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
         filters.projectIds,
         filters.query,
         people,
-        entries
+        effectiveAllEntries
       ),
-    [entries, filters, people]
+    [effectiveAllEntries, filters, people]
   );
-  const filteredPeople = useMemo(
-    () => people.filter((person) => filtered.personIdSet.has(person.id)),
-    [filtered.personIdSet, people]
+  const capacityMap = useMemo(
+    () => buildCapacityMap(capacity, effectiveAllEntries),
+    [capacity, effectiveAllEntries]
   );
-  const effectiveEntries = useMemo(() => {
-    const previewIds = new Set(pendingPreviews.keys());
-    const values = filtered.entries
-      .filter((entry) => !previewIds.has(entry.id))
-      .concat(
-        Array.from(pendingPreviews.values()).filter((entry) =>
-          filtered.personIdSet.has(entry.personId)
-        )
-      );
-    return values;
-  }, [filtered.entries, filtered.personIdSet, pendingPreviews]);
+  const periodCapacityMap = useMemo(
+    () =>
+      buildPeriodCapacityMap(
+        capacity,
+        effectiveAllEntries,
+        range,
+        people.map((person) => person.id)
+      ),
+    [capacity, effectiveAllEntries, people, range]
+  );
+  const filteredPeople = useMemo(() => {
+    const statuses = new Set(filters.capacityStatuses ?? []);
+    const sort = filters.peopleSort ?? "name-asc";
+    const compareName = (left: SchedulerPerson, right: SchedulerPerson) =>
+      (left.displayName ?? left.name).localeCompare(
+        right.displayName ?? right.name,
+        locale,
+        { sensitivity: "base" }
+      ) ||
+      left.name.localeCompare(right.name, locale, { sensitivity: "base" }) ||
+      left.id.localeCompare(right.id);
+    return people
+      .filter((person) => filtered.personIdSet.has(person.id))
+      .filter((person) => {
+        if (!statuses.size) return true;
+        const summary = periodCapacityMap.get(person.id);
+        return summary ? statuses.has(summary.status) : false;
+      })
+      .slice()
+      .sort((left, right) => {
+        if (sort === "name-asc") return compareName(left, right);
+        const leftSummary = periodCapacityMap.get(left.id);
+        const rightSummary = periodCapacityMap.get(right.id);
+        const leftUnavailable = !leftSummary || leftSummary.status === "unavailable";
+        const rightUnavailable =
+          !rightSummary || rightSummary.status === "unavailable";
+        if (leftUnavailable !== rightUnavailable) return leftUnavailable ? 1 : -1;
+        const leftRatio = leftSummary?.ratio ?? 0;
+        const rightRatio = rightSummary?.ratio ?? 0;
+        const ratioOrder =
+          sort === "capacity-asc"
+            ? leftRatio - rightRatio
+            : rightRatio - leftRatio;
+        return ratioOrder || compareName(left, right);
+      });
+  }, [filtered.personIdSet, filters.capacityStatuses, filters.peopleSort, locale, people, periodCapacityMap]);
   const entriesByPerson = useMemo(() => {
     const map = new Map<string, SchedulerEntry[]>();
-    for (const entry of effectiveEntries) {
+    for (const entry of filtered.entries) {
       const current = map.get(entry.personId);
       if (current) current.push(entry);
       else map.set(entry.personId, [entry]);
     }
     return map;
-  }, [effectiveEntries]);
-  const capacityMap = useMemo(
-    () => buildCapacityMap(capacity, effectiveEntries),
-    [capacity, effectiveEntries]
-  );
+  }, [filtered.entries]);
   const pendingIds = useMemo(
     () => new Set(pendingPreviews.keys()),
     [pendingPreviews]
@@ -421,19 +604,35 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
     onVisibleRangeChange?.(range);
   }, [onVisibleRangeChange, range]);
 
+  useEffect(
+    () => () => {
+      window.clearTimeout(hoverTimerRef.current);
+      for (const timer of noticeTimersRef.current.values())
+        window.clearTimeout(timer);
+    },
+    []
+  );
+
   const finishInteraction = useCallback(
     async (interaction: InteractionState<unknown>) => {
-      setMessage(undefined);
       if (interaction.mode === "create" && interaction.createDraft) {
         const callback = props.onCreateRequest;
         if (!callback) return;
         setPendingCreate(interaction.createDraft);
         try {
           const decision = await callback(interaction.createDraft);
-          if (!decision.accepted)
-            setMessage(decision.reason ?? "Creation was rejected.");
+          if (!decision.silent)
+            addNotice(
+              decision.accepted ? "success" : "error",
+              decision.accepted
+                ? "Allocation created."
+                : decision.reason ?? "Creation was rejected."
+            );
         } catch (error) {
-          setMessage(error instanceof Error ? error.message : "Creation failed.");
+          addNotice(
+            "error",
+            error instanceof Error ? error.message : "Creation failed."
+          );
         } finally {
           setPendingCreate(undefined);
         }
@@ -459,10 +658,20 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
                 proposed,
                 edge: interaction.mode === "resize-start" ? "start" : "end"
               });
-        if (decision && !decision.accepted)
-          setMessage(decision.reason ?? "The change was rejected.");
+        if (decision && !decision.silent)
+          addNotice(
+            decision.accepted ? "success" : "error",
+            decision.accepted
+              ? interaction.mode === "move"
+                ? "Allocation moved."
+                : "Allocation resized."
+              : decision.reason ?? "The change was rejected."
+          );
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "The change failed.");
+        addNotice(
+          "error",
+          error instanceof Error ? error.message : "The change failed."
+        );
       } finally {
         setPendingPreviews((current) => {
           const next = new Map(current);
@@ -472,18 +681,29 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
       }
     },
     [
+      addNotice,
       props.onCreateRequest,
       props.onMoveRequest,
       props.onResizeRequest
     ]
   );
 
+  const openEntry = useCallback(
+    (entry: SchedulerEntry) => {
+      setHover(null);
+      setContextMenu(null);
+      props.onEntryOpen?.(entry);
+    },
+    [props.onEntryOpen]
+  );
+
   const pointer = usePointerInteraction({
     scrollElement,
-    range,
+    range: timelineRange,
     dayWidth,
-    personColumnWidth: PERSON_COLUMN_WIDTH,
-    onFinish: finishInteraction
+    personColumnWidth,
+    onFinish: finishInteraction,
+    onEntryClick: openEntry
   });
 
   const activeEntries = useMemo(() => {
@@ -511,10 +731,24 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
     (index: number) => filteredPeople[index]?.id ?? index,
     [filteredPeople]
   );
-  const virtualizer = useFixedVirtualRows({
+  const rowSizes = useMemo(
+    () =>
+      filteredPeople.map((person) => {
+        const laneCount = packEntries(
+          activeEntries.get(person.id) ?? [],
+          timelineRange,
+          Number.MAX_SAFE_INTEGER
+        ).laneCount;
+        const visibleLanes = expandedPeople.has(person.id)
+          ? Math.max(safeCollapsedLaneCount, laneCount)
+          : safeCollapsedLaneCount;
+        return rowPadding + visibleLanes * laneHeight;
+      }),
+    [activeEntries, expandedPeople, filteredPeople, laneHeight, rowPadding, safeCollapsedLaneCount, timelineRange]
+  );
+  const virtualizer = useVariableVirtualRows({
     scrollElement,
-    count: filteredPeople.length,
-    rowHeight,
+    sizes: rowSizes,
     offset: 48,
     overscan: 8,
     getKey: getPersonKey
@@ -533,17 +767,34 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
     });
   };
 
+  const changeCapacityStatus = (statusValue: CapacityStatus) => {
+    const current = filters.capacityStatuses ?? [];
+    onFiltersChange({
+      ...filters,
+      capacityStatuses: current.includes(statusValue)
+        ? current.filter((value) => value !== statusValue)
+        : [...current, statusValue]
+    });
+  };
+
   const deleteEntry = useCallback(
     async (entry: SchedulerEntry) => {
       if (!props.onDeleteRequest || entry.readOnly) return;
-      setMessage(undefined);
       setPendingPreviews((current) => new Map(current).set(entry.id, entry));
       try {
         const decision = await props.onDeleteRequest(entry);
-        if (!decision.accepted)
-          setMessage(decision.reason ?? "Deletion was rejected.");
+        if (!decision.silent)
+          addNotice(
+            decision.accepted ? "success" : "error",
+            decision.accepted
+              ? "Allocation deleted."
+              : decision.reason ?? "Deletion was rejected."
+          );
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "Deletion failed.");
+        addNotice(
+          "error",
+          error instanceof Error ? error.message : "Deletion failed."
+        );
       } finally {
         setPendingPreviews((current) => {
           const next = new Map(current);
@@ -552,7 +803,7 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
         });
       }
     },
-    [props.onDeleteRequest]
+    [addNotice, props.onDeleteRequest]
   );
 
   const showHover = useCallback((entry: SchedulerEntry, anchor: DOMRect) => {
@@ -562,27 +813,25 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
       260
     );
   }, []);
-  const cancelHover = useCallback(
-    () => window.clearTimeout(hoverTimerRef.current),
-    []
+  const cancelHover = useCallback(() => {
+    window.clearTimeout(hoverTimerRef.current);
+    setHover(null);
+  }, []);
+  const showContextMenu = useCallback(
+    (entry: SchedulerEntry, anchor: DOMRect) => {
+      cancelHover();
+      setContextMenu({ entry, anchor });
+    },
+    [cancelHover]
   );
-  const openEntry = useCallback(
-    (entry: SchedulerEntry) => props.onEntryOpen?.(entry),
-    [props.onEntryOpen]
-  );
-  const openOverflow = useCallback(
-    (
-      targetPerson: SchedulerPerson,
-      targetEntries: SchedulerEntry[],
-      anchor: DOMRect
-    ) =>
-      setOverflow({
-        person: targetPerson,
-        entries: targetEntries,
-        anchor
-      }),
-    []
-  );
+  const toggleExpanded = useCallback((personId: string) => {
+    setExpandedPeople((current) => {
+      const next = new Set(current);
+      if (next.has(personId)) next.delete(personId);
+      else next.add(personId);
+      return next;
+    });
+  }, []);
 
   const rangeLabel =
     viewport.zoom === "day"
@@ -606,54 +855,153 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
       className={`fks-root${props.className ? ` ${props.className}` : ""}`}
       style={props.style}
       aria-label={ariaLabel}
+      aria-busy={status === "loading"}
     >
       <div className="fks-toolbar">
         <div className="fks-toolbar__filters">
-          <label className="fks-search">
-            <span aria-hidden="true">⌕</span>
-            <input
-              value={filters.query}
-              onChange={(event) =>
-                onFiltersChange({ ...filters, query: event.target.value })
+          <FilterButton
+            label="Filters"
+            icon="☷"
+            count={activeFilterCount}
+            open={openFilter === "filters"}
+            menuClassName="fks-filter-menu--filters"
+            onClick={() =>
+              setOpenFilter((value) => (value === "filters" ? null : "filters"))
+            }
+          >
+            <div className="fks-filter-tabs" role="tablist" aria-label="Filter categories">
+              {(
+                [
+                  ["people", "People"],
+                  ["projects", "Projects"],
+                  ["capacity", "Capacity"],
+                  ["sort", "Sort"]
+                ] as const
+              ).map(([section, label]) => (
+                <button
+                  key={section}
+                  type="button"
+                  role="tab"
+                  aria-selected={filterSection === section}
+                  onClick={() => setFilterSection(section)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {filterSection === "people" && (
+              <>
+                <MenuSearch
+                  label="Search people"
+                  value={peopleQuery}
+                  onChange={setPeopleQuery}
+                />
+                <div className="fks-filter-options">
+                  {matchingPeople.map((person) => (
+                    <FilterOption
+                      key={person.id}
+                      checked={filters.personIds.includes(person.id)}
+                      label={person.name}
+                      onChange={() => changeSelection("personIds", person.id)}
+                    />
+                  ))}
+                  {!matchingPeople.length && <FilterEmpty />}
+                </div>
+              </>
+            )}
+            {filterSection === "projects" && (
+              <>
+                <MenuSearch
+                  label="Search projects or companies"
+                  value={projectQuery}
+                  onChange={setProjectQuery}
+                />
+                <div className="fks-filter-options">
+                  {matchingProjects.map((project) => (
+                    <FilterOption
+                      key={project.id}
+                      checked={filters.projectIds.includes(project.id)}
+                      label={`${project.name}${project.customerName ? ` · ${project.customerName}` : ""}`}
+                      onChange={() => changeSelection("projectIds", project.id)}
+                    />
+                  ))}
+                  {!matchingProjects.length && <FilterEmpty />}
+                </div>
+              </>
+            )}
+            {filterSection === "capacity" && (
+              <div className="fks-filter-options">
+                {capacity.length > 0 ? (
+                  (
+                    [
+                      ["under", "Under capacity"],
+                      ["full", "At capacity"],
+                      ["over", "Over capacity"],
+                      ["unavailable", "Unavailable"]
+                    ] as const
+                  ).map(([statusValue, label]) => (
+                    <FilterOption
+                      key={statusValue}
+                      checked={(filters.capacityStatuses ?? []).includes(statusValue)}
+                      label={label}
+                      onChange={() => changeCapacityStatus(statusValue)}
+                    />
+                  ))
+                ) : (
+                  <FilterEmpty label="Capacity data is unavailable." />
+                )}
+              </div>
+            )}
+            {filterSection === "sort" && (
+              <div className="fks-filter-options">
+                <SortOption
+                  checked={(filters.peopleSort ?? "name-asc") === "name-asc"}
+                  label="Name A–Z"
+                  onChange={() =>
+                    onFiltersChange({ ...filters, peopleSort: "name-asc" })
+                  }
+                />
+                {capacity.length > 0 && (
+                  <>
+                    <SortOption
+                      checked={filters.peopleSort === "capacity-asc"}
+                      label="Capacity low to high"
+                      onChange={() =>
+                        onFiltersChange({ ...filters, peopleSort: "capacity-asc" })
+                      }
+                    />
+                    <SortOption
+                      checked={filters.peopleSort === "capacity-desc"}
+                      label="Capacity high to low"
+                      onChange={() =>
+                        onFiltersChange({ ...filters, peopleSort: "capacity-desc" })
+                      }
+                    />
+                  </>
+                )}
+              </div>
+            )}
+          </FilterButton>
+          {viewport.zoom === "week" && onShowWeekendsChange && (
+            <FilterButton
+              label="View"
+              icon="⚙"
+              count={0}
+              open={openFilter === "view"}
+              onClick={() =>
+                setOpenFilter((value) => (value === "view" ? null : "view"))
               }
-              placeholder="Search people"
-              aria-label="Search people"
-            />
-          </label>
-          <FilterButton
-            label="People"
-            count={filters.personIds.length}
-            open={openFilter === "people"}
-            onClick={() =>
-              setOpenFilter((value) => (value === "people" ? null : "people"))
-            }
-          >
-            {people.map((person) => (
+            >
               <FilterOption
-                key={person.id}
-                checked={filters.personIds.includes(person.id)}
-                label={person.name}
-                onChange={() => changeSelection("personIds", person.id)}
+                checked={showWeekends}
+                label="Show weekends"
+                onChange={() => onShowWeekendsChange(!showWeekends)}
               />
-            ))}
-          </FilterButton>
-          <FilterButton
-            label="Projects"
-            count={filters.projectIds.length}
-            open={openFilter === "projects"}
-            onClick={() =>
-              setOpenFilter((value) => (value === "projects" ? null : "projects"))
-            }
-          >
-            {projects.map((project) => (
-              <FilterOption
-                key={project.id}
-                checked={filters.projectIds.includes(project.id)}
-                label={`${project.name}${project.customerName ? ` · ${project.customerName}` : ""}`}
-                onChange={() => changeSelection("projectIds", project.id)}
-              />
-            ))}
-          </FilterButton>
+              <p className="fks-filter-hint">
+                Capacity totals always include the full week.
+              </p>
+            </FilterButton>
+          )}
         </div>
         <div className="fks-navigation">
           <button
@@ -670,7 +1018,8 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
               onViewportChange({ ...viewport, anchorDate: todayKey() })
             }
           >
-            Today
+            <span className="fks-button-icon" aria-hidden="true">⌾</span>
+            <span className="fks-button-label">Today</span>
           </button>
           <button
             type="button"
@@ -689,132 +1038,176 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
               aria-pressed={viewport.zoom === zoom}
               onClick={() => onViewportChange({ ...viewport, zoom })}
             >
-              {zoom[0]?.toUpperCase()}
-              {zoom.slice(1)}
+              <span className="fks-zoom-short">{zoom[0]?.toUpperCase()}</span>
+              <span className="fks-zoom-label">{zoom.slice(1)}</span>
             </button>
           ))}
         </div>
       </div>
-      {message && (
-        <div className="fks-message" role="status">
-          {message}
-          <button type="button" onClick={() => setMessage(undefined)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-      <div
-        ref={captureScrollElement}
-        className="fks-scroll"
-        role="grid"
-        aria-rowcount={filteredPeople.length}
-        aria-colcount={days.length}
-      >
+      <div className="fks-scroll-shell">
         <div
-          className="fks-board"
-          style={{
-            width: PERSON_COLUMN_WIDTH + days.length * dayWidth,
-            minHeight: "100%"
-          }}
+          ref={captureScrollElement}
+          className="fks-scroll"
+          role="grid"
+          aria-rowcount={filteredPeople.length}
+          aria-colcount={days.length}
         >
           <div
-            className="fks-header"
-            style={{ width: PERSON_COLUMN_WIDTH + days.length * dayWidth }}
-            role="row"
+            className="fks-board"
+            style={{
+              width: personColumnWidth + days.length * dayWidth,
+              minHeight: "100%"
+            }}
           >
             <div
-              className="fks-person-header"
-              style={{ width: PERSON_COLUMN_WIDTH }}
+              className="fks-header"
+              style={{ width: personColumnWidth + days.length * dayWidth }}
+              role="row"
             >
-              <span>{filteredPeople.length} people</span>
-              <small>Capacity</small>
+              <div
+                className="fks-person-header"
+                style={{ width: personColumnWidth }}
+              >
+                <span>{filteredPeople.length} people</span>
+                <small>Capacity</small>
+              </div>
+              <div
+                className="fks-date-header"
+                style={{
+                  left: personColumnWidth,
+                  width: days.length * dayWidth,
+                  gridTemplateColumns: `repeat(${days.length}, ${dayWidth}px)`
+                }}
+              >
+                {days.map((date) => (
+                  <div
+                    key={date}
+                    className={`${isWeekend(date) ? "fks-date--weekend" : ""}${
+                      date === todayKey() ? " fks-date--today" : ""
+                    }`}
+                    role="columnheader"
+                  >
+                    <span>
+                      {formatDay(date, locale, {
+                        weekday: viewport.zoom === "month" ? "narrow" : "short"
+                      })}
+                    </span>
+                    <strong>{formatDay(date, locale, { day: "numeric" })}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
             <div
-              className="fks-date-header"
-              style={{
-                left: PERSON_COLUMN_WIDTH,
-                width: days.length * dayWidth,
-                gridTemplateColumns: `repeat(${days.length}, ${dayWidth}px)`
-              }}
+              className="fks-rows"
+              style={{ height: virtualizer.totalSize }}
             >
-              {days.map((date) => (
-                <div
-                  key={date}
-                  className={`${isWeekend(date) ? "fks-date--weekend" : ""}${
-                    date === todayKey() ? " fks-date--today" : ""
-                  }`}
-                  role="columnheader"
-                >
-                  <span>
-                    {formatDay(date, locale, {
-                      weekday: viewport.zoom === "month" ? "narrow" : "short"
-                    })}
-                  </span>
-                  <strong>{formatDay(date, locale, { day: "numeric" })}</strong>
-                </div>
-              ))}
+              {virtualizer.rows.map((virtualRow) => {
+                const person = filteredPeople[virtualRow.index];
+                if (!person) return null;
+                const activeCreate =
+                  (pointer.state?.createDraft?.personId === person.id
+                    ? pointer.state.createDraft
+                    : undefined) ??
+                  (pendingCreate?.personId === person.id ? pendingCreate : undefined);
+                const capacitySummary = periodCapacityMap.get(person.id);
+                return (
+                  <div
+                    key={person.id}
+                    className="fks-virtual-row"
+                    style={{
+                      height: virtualRow.size,
+                      transform: `translateY(${virtualRow.start}px)`
+                    }}
+                  >
+                    <SchedulerRow
+                      person={person}
+                      entries={activeEntries.get(person.id) ?? []}
+                      projects={projectsById}
+                      range={timelineRange}
+                      days={days}
+                      dayWidth={dayWidth}
+                      rowHeight={virtualRow.size}
+                      laneHeight={laneHeight}
+                      personColumnWidth={personColumnWidth}
+                      collapsedLaneCount={safeCollapsedLaneCount}
+                      expanded={expandedPeople.has(person.id)}
+                      capacityMap={capacityMap}
+                      {...(capacitySummary
+                        ? { capacitySummary }
+                        : {})}
+                      pendingIds={pendingIds}
+                      {...(activeCreate ? { createDraft: activeCreate } : {})}
+                      {...(props.renderEntryContent
+                        ? { renderEntryContent: props.renderEntryContent }
+                        : {})}
+                      {...(props.renderPersonCell
+                        ? { renderPersonCell: props.renderPersonCell }
+                        : {})}
+                      onStartEntry={pointer.startEntry}
+                      onStartCreate={pointer.startCreate}
+                      onHover={showHover}
+                      onHoverCancel={cancelHover}
+                      onContextMenu={showContextMenu}
+                      onOpen={openEntry}
+                      onDelete={deleteEntry}
+                      onToggleExpanded={toggleExpanded}
+                    />
+                  </div>
+                );
+              })}
             </div>
+            {!filteredPeople.length && status === "ready" && (
+              <div className="fks-empty">No people match these filters.</div>
+            )}
           </div>
-          <div
-            className="fks-rows"
-            style={{ height: virtualizer.totalSize }}
-          >
-            {virtualizer.rows.map((virtualRow) => {
-              const person = filteredPeople[virtualRow.index];
-              if (!person) return null;
-              const activeCreate =
-                (pointer.state?.createDraft?.personId === person.id
-                  ? pointer.state.createDraft
-                  : undefined) ??
-                (pendingCreate?.personId === person.id ? pendingCreate : undefined);
-              return (
-                <div
-                  key={person.id}
-                  className="fks-virtual-row"
-                  style={{
-                    height: virtualRow.size,
-                    transform: `translateY(${virtualRow.start}px)`
-                  }}
-                >
-                  <SchedulerRow
-                    person={person}
-                    entries={activeEntries.get(person.id) ?? []}
-                    projects={projectsById}
-                    range={range}
-                    days={days}
-                    dayWidth={dayWidth}
-                    rowHeight={rowHeight}
-                    capacityMap={capacityMap}
-                    pendingIds={pendingIds}
-                    {...(activeCreate ? { createDraft: activeCreate } : {})}
-                    {...(props.renderEntryContent
-                      ? { renderEntryContent: props.renderEntryContent }
-                      : {})}
-                    {...(props.renderPersonCell
-                      ? { renderPersonCell: props.renderPersonCell }
-                      : {})}
-                    onStartEntry={pointer.startEntry}
-                    onStartCreate={pointer.startCreate}
-                    onHover={showHover}
-                    onHoverCancel={cancelHover}
-                    onOpen={openEntry}
-                    onDelete={deleteEntry}
-                    onOverflow={openOverflow}
-                  />
-                </div>
-              );
-            })}
-          </div>
-          {!filteredPeople.length && status === "ready" && (
-            <div className="fks-empty">No people match these filters.</div>
-          )}
         </div>
         {status !== "ready" && (
-          <div className="fks-status" role={status === "error" ? "alert" : "status"}>
+          <div
+            className="fks-status"
+            role={status === "error" ? "alert" : "status"}
+          >
+            <span className={status === "loading" ? "fks-spinner" : undefined} />
             {status === "loading" ? "Loading schedule…" : errorMessage}
           </div>
         )}
       </div>
+      {contextMenu && (
+        <OverlayPortal
+          anchor={contextMenu.anchor}
+          className="fks-context-menu"
+          role="menu"
+          width={210}
+          onDismiss={() => setContextMenu(null)}
+        >
+          {props.onEntryOpen && (
+            <button
+              type="button"
+              role="menuitem"
+              autoFocus
+              onClick={() => openEntry(contextMenu.entry)}
+            >
+              <span aria-hidden="true">✎</span>
+              Edit allocation
+            </button>
+          )}
+          {props.onDeleteRequest && !contextMenu.entry.readOnly && (
+            <button
+              type="button"
+              role="menuitem"
+              autoFocus={!props.onEntryOpen}
+              className="fks-context-menu__danger"
+              onClick={() => {
+                const entry = contextMenu.entry;
+                setContextMenu(null);
+                void deleteEntry(entry);
+              }}
+            >
+              <span aria-hidden="true">×</span>
+              Delete allocation
+            </button>
+          )}
+        </OverlayPortal>
+      )}
       {hover && (
         <OverlayPortal
           anchor={hover.anchor}
@@ -843,37 +1236,25 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
           )}
         </OverlayPortal>
       )}
-      {overflow && (
-        <OverlayPortal
-          anchor={overflow.anchor}
-          className="fks-overflow-panel"
-          onDismiss={() => setOverflow(null)}
-        >
-          <header>
-            <strong>{overflow.person.name}</strong>
-            <span>{overflow.entries.length} overlapping entries</span>
-          </header>
-          {overflow.entries.map((entry) => (
-            <button
-              type="button"
-              key={entry.id}
-              onClick={() => {
-                setOverflow(null);
-                props.onEntryOpen?.(entry);
-              }}
+      {notices.length > 0 && (
+        <div className="fks-toast-stack" aria-label="Schedule notifications">
+          {notices.map((notice) => (
+            <div
+              key={notice.id}
+              className={`fks-toast fks-toast--${notice.tone}`}
+              role={notice.tone === "error" ? "alert" : "status"}
             >
-              <strong>
-                {entry.title ??
-                  (entry.projectId
-                    ? projectsById.get(entry.projectId)?.name
-                    : "Absence")}
-              </strong>
-              <span>
-                {entry.startDate} – {entry.endDate} · {entry.hoursPerDay}h/day
-              </span>
-            </button>
+              <span>{notice.message}</span>
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                onClick={() => dismissNotice(notice.id)}
+              >
+                ×
+              </button>
+            </div>
           ))}
-        </OverlayPortal>
+        </div>
       )}
     </section>
   );
@@ -881,15 +1262,19 @@ function SchedulerImplementation(props: AnySchedulerProps): JSX.Element {
 
 function FilterButton({
   label,
+  icon,
   count,
   open,
   onClick,
+  menuClassName,
   children
 }: {
   label: string;
+  icon?: string;
   count: number;
   open: boolean;
   onClick: () => void;
+  menuClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -900,12 +1285,44 @@ function FilterButton({
         aria-expanded={open}
         onClick={onClick}
       >
-        {label}
-        {count > 0 && <span>{count}</span>}
+        {icon && <span className="fks-filter-button__icon" aria-hidden="true">{icon}</span>}
+        <span className="fks-filter-button__label">{label}</span>
+        {count > 0 && <span className="fks-filter-button__count">{count}</span>}
       </button>
-      {open && <div className="fks-filter-menu">{children}</div>}
+      {open && (
+        <div className={`fks-filter-menu${menuClassName ? ` ${menuClassName}` : ""}`}>
+          {children}
+        </div>
+      )}
     </div>
   );
+}
+
+function MenuSearch({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="fks-menu-search">
+      <span aria-hidden="true">⌕</span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={label}
+        aria-label={label}
+        autoFocus
+      />
+    </label>
+  );
+}
+
+function FilterEmpty({ label = "No matches found." }: { label?: string }) {
+  return <p className="fks-filter-empty">{label}</p>;
 }
 
 function FilterOption({
@@ -920,6 +1337,23 @@ function FilterOption({
   return (
     <label className="fks-filter-option">
       <input type="checkbox" checked={checked} onChange={onChange} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function SortOption({
+  checked,
+  label,
+  onChange
+}: {
+  checked: boolean;
+  label: string;
+  onChange: () => void;
+}) {
+  return (
+    <label className="fks-filter-option">
+      <input type="radio" name="fks-people-sort" checked={checked} onChange={onChange} />
       <span>{label}</span>
     </label>
   );

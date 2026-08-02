@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { IInputs, IOutputs } from "./generated/ManifestTypes";
 import { DataverseSchedulerRepository } from "./DataverseSchedulerRepository";
+import { parseDefaultView } from "./configuration";
 import {
   FlowkifySchedulerHost,
   type FlowkifySchedulerHostProps
@@ -35,6 +36,7 @@ export class SchedulerControl
     const props: FlowkifySchedulerHostProps = {
       repository: this.repository,
       height,
+      defaultZoom: parseDefaultView(context.parameters.defaultView.raw),
       onEntrySelected: (entryId) => {
         this.selectedEntryId = entryId;
         this.notifyOutputChanged();

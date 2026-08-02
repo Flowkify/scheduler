@@ -26,14 +26,17 @@ export function App(): JSX.Element {
     setEntries(seed.entries);
   }, [seed]);
   const [viewport, setViewport] = useState<SchedulerViewport>({
-    zoom: "month",
+    zoom: "week",
     anchorDate: today
   });
   const [filters, setFilters] = useState<SchedulerFilters>({
     query: "",
     personIds: [],
-    projectIds: []
+    projectIds: [],
+    capacityStatuses: [],
+    peopleSort: "name-asc"
   });
+  const [showWeekends, setShowWeekends] = useState(false);
   const [opened, setOpened] = useState<SchedulerEntry<DemoMetadata>>();
 
   const persist = async (
@@ -99,8 +102,10 @@ export function App(): JSX.Element {
           capacity={seed.capacity}
           viewport={viewport}
           filters={filters}
+          showWeekends={showWeekends}
           onViewportChange={setViewport}
           onFiltersChange={setFilters}
+          onShowWeekendsChange={setShowWeekends}
           onCreateRequest={create}
           onMoveRequest={persist}
           onResizeRequest={persist}

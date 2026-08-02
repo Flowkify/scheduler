@@ -13,6 +13,7 @@ interface PointerOptions<TMeta> {
   dayWidth: number;
   personColumnWidth: number;
   onFinish: (state: InteractionState<TMeta>) => void;
+  onEntryClick?: (entry: SchedulerEntry<TMeta>) => void;
 }
 
 export interface PointerInteraction<TMeta> {
@@ -117,7 +118,17 @@ export function usePointerInteraction<TMeta>(
     const completed = stateRef.current;
     stateRef.current = null;
     setState(null);
-    if (completed) optionsRef.current.onFinish(completed);
+    if (!completed) return;
+    const clicked =
+      completed.mode === "move" &&
+      completed.entry &&
+      completed.proposedEntry &&
+      completed.entry.personId === completed.proposedEntry.personId &&
+      completed.entry.startDate === completed.proposedEntry.startDate &&
+      completed.entry.endDate === completed.proposedEntry.endDate;
+    if (clicked && completed.entry)
+      optionsRef.current.onEntryClick?.(completed.entry);
+    else optionsRef.current.onFinish(completed);
   }, [removeListeners]);
 
   const begin = useCallback(

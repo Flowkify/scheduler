@@ -15,6 +15,7 @@ export {
 } from "./date";
 export {
   buildCapacityMap,
+  buildPeriodCapacityMap,
   capacityKey,
   entryGeometry,
   filterPeopleAndEntries,
@@ -29,6 +30,7 @@ export type {
 } from "./interaction";
 export type {
   CreateDraft,
+  CapacityStatus,
   DailyCapacity,
   DateKey,
   EntryMutation,
@@ -36,10 +38,12 @@ export type {
   EntryVariant,
   HoverCardContext,
   MutationDecision,
+  PeriodCapacitySummary,
   ResizeMutation,
   SchedulerEntry,
   SchedulerFilters,
   SchedulerPerson,
+  SchedulerPeopleSort,
   SchedulerProject,
   SchedulerProps,
   SchedulerViewport,
