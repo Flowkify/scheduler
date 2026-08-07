@@ -171,6 +171,96 @@
   gap: 12px;
 }
 
+.fks-project-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  gap: 8px;
+  margin-top: -5px;
+}
+
+.fks-project-actions button {
+  min-height: 40px;
+  border: 1px solid #d7dce3;
+  border-radius: 8px;
+  color: #475569;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.fks-project-actions button:hover {
+  border-color: #c9c4f4;
+  background: #f5f6ff;
+}
+
+.fks-project-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fks-project-color-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.fks-project-color-action > i {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 2px solid white;
+  border-radius: 5px;
+  box-shadow: 0 0 0 1px #cbd5e1;
+}
+
+.fks-project-color-action strong,
+.fks-project-color-action small {
+  display: block;
+}
+
+.fks-project-color-action strong {
+  color: #18212f;
+  font-size: 11px;
+}
+
+.fks-project-color-action small {
+  margin-top: 1px;
+  color: #697386;
+  font-size: 10px;
+}
+
+.fks-project-popout {
+  display: grid;
+  padding: 0;
+  place-items: center;
+}
+
+.fks-project-color-form {
+  display: grid;
+  gap: 14px;
+}
+
+.fks-project-color-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 5px;
+}
+
+.fks-host-dialog .fks-project-color-picker input {
+  width: 64px;
+  height: 48px;
+  margin-top: 0;
+  padding: 3px;
+  cursor: pointer;
+}
+
+.fks-project-color-picker output {
+  color: #475569;
+  font: 650 13px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .fks-allocation-form > label,
 .fks-allocation-form__dates > label,
 .fks-host-combobox > label {

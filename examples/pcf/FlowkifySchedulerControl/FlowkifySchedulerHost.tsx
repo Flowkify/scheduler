@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type AllocationCreateInput,
   DataverseSchedulerRepository,
+  DEFAULT_PROJECT_COLOR,
   type FlowkifyEntryMetadata,
   type LoadedSchedule,
   type MutationScope,
@@ -32,6 +33,7 @@ export interface FlowkifySchedulerHostProps {
   repository: DataverseSchedulerRepository;
   height: number;
   defaultZoom: SchedulerZoom;
+  onProjectOpenInDataverse: (projectId: string) => Promise<void>;
   onEntrySelected: (entryId: string) => void;
 }
 
@@ -61,6 +63,7 @@ export function FlowkifySchedulerHost({
   repository,
   height,
   defaultZoom,
+  onProjectOpenInDataverse,
   onEntrySelected
 }: FlowkifySchedulerHostProps): JSX.Element {
   const [schedule, setSchedule] = useState(emptySchedule);
@@ -83,6 +86,8 @@ export function FlowkifySchedulerHost({
   const [scopePrompt, setScopePrompt] = useState<ScopePrompt>();
   const [deletePrompt, setDeletePrompt] = useState<DeletePrompt>();
   const [createPrompt, setCreatePrompt] = useState<CreatePrompt>();
+  const [projectColorProject, setProjectColorProject] =
+    useState<SchedulerProject>();
   const [opened, setOpened] =
     useState<SchedulerEntry<FlowkifyEntryMetadata>>();
   const requestGeneration = useRef(0);
@@ -280,6 +285,8 @@ export function FlowkifySchedulerHost({
           }}
           people={schedule.people}
           projects={schedule.projects}
+          onEditProjectColor={setProjectColorProject}
+          onOpenProjectInDataverse={onProjectOpenInDataverse}
           onCancel={() => {
             createPrompt.resolve({ accepted: false, silent: true });
             setCreatePrompt(undefined);
@@ -300,6 +307,8 @@ export function FlowkifySchedulerHost({
           initial={allocationInputFromEntry(opened)}
           people={schedule.people}
           projects={schedule.projects}
+          onEditProjectColor={setProjectColorProject}
+          onOpenProjectInDataverse={onProjectOpenInDataverse}
           onCancel={() => setOpened(undefined)}
           onSubmit={async (input) => {
             await repository.updateAllocation(opened, input);
@@ -311,6 +320,18 @@ export function FlowkifySchedulerHost({
             if (decision.accepted) setOpened(undefined);
           }}
           onOpenSeries={openSeries}
+        />
+      )}
+      {projectColorProject && (
+        <ProjectColorDialog
+          key={projectColorProject.id}
+          project={projectColorProject}
+          onCancel={() => setProjectColorProject(undefined)}
+          onSubmit={async (color) => {
+            await repository.updateProjectColor(projectColorProject.id, color);
+            await reload(range);
+            setProjectColorProject(undefined);
+          }}
         />
       )}
       {opened?.metadata?.source !== "allocation" && opened && (
@@ -578,6 +599,81 @@ function HostDialog({
   );
 }
 
+function ProjectColorDialog({
+  project,
+  onCancel,
+  onSubmit
+}: {
+  project: SchedulerProject;
+  onCancel: () => void;
+  onSubmit: (color: string) => Promise<void>;
+}) {
+  const [color, setColor] = useState(
+    project.accentColor ?? DEFAULT_PROJECT_COLOR
+  );
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string>();
+  return (
+    <HostDialog
+      title="Project colour"
+      compact
+      elevated
+      onDismiss={() => {
+        if (!saving) onCancel();
+      }}
+    >
+      <p className="fks-host-dialog__intro">
+        Choose the allocation colour for <strong>{project.name}</strong>.
+      </p>
+      <form
+        className="fks-project-color-form"
+        aria-busy={saving}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          setSubmitError(undefined);
+          try {
+            await onSubmit(color);
+          } catch (reason) {
+            setSaving(false);
+            setSubmitError(
+              reason instanceof Error
+                ? reason.message
+                : "Dataverse rejected the project colour."
+            );
+          }
+        }}
+      >
+        <label>
+          <span>Colour</span>
+          <span className="fks-project-color-picker">
+            <input
+              type="color"
+              value={color}
+              aria-label="Choose project colour"
+              onChange={(event) => setColor(event.target.value.toUpperCase())}
+            />
+            <output>{color}</output>
+          </span>
+        </label>
+        {submitError && (
+          <p className="fks-host-form-error" role="alert">
+            {submitError}
+          </p>
+        )}
+        <div className="fks-host-dialog__actions">
+          <button type="button" onClick={onCancel} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" className="fks-host-primary" disabled={saving}>
+            {saving ? "Saving…" : "Save colour"}
+          </button>
+        </div>
+      </form>
+    </HostDialog>
+  );
+}
+
 function AllocationDialog({
   mode,
   initial,
@@ -586,6 +682,8 @@ function AllocationDialog({
   projects,
   onCancel,
   onSubmit,
+  onEditProjectColor,
+  onOpenProjectInDataverse,
   onDelete,
   onOpenSeries
 }: {
@@ -596,6 +694,8 @@ function AllocationDialog({
   projects: readonly SchedulerProject[];
   onCancel: () => void;
   onSubmit: (input: AllocationCreateInput) => Promise<void>;
+  onEditProjectColor: (project: SchedulerProject) => void;
+  onOpenProjectInDataverse: (projectId: string) => Promise<void>;
   onDelete?: () => Promise<void>;
   onOpenSeries?: (id: string) => Promise<void>;
 }) {
@@ -614,6 +714,7 @@ function AllocationDialog({
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const selectedPerson = people.find((person) => person.id === personId);
+  const selectedProject = projects.find((project) => project.id === projectId);
   const recurrenceEditable = !entry?.metadata?.rootAllocationId;
   const repeating = recurrencePattern !== RECURRENCE_OPTIONS[0].value;
   const input: AllocationCreateInput = {
@@ -676,10 +777,57 @@ function AllocationDialog({
             id: project.id,
             label: project.name,
             description: project.customerName,
-            color: project.accentColor
+            color: project.accentColor ?? DEFAULT_PROJECT_COLOR
           }))}
-          onChange={setProjectId}
+          onChange={(value) => {
+            setProjectId(value);
+            setSubmitError(undefined);
+          }}
         />
+        {selectedProject && (
+          <div className="fks-project-actions">
+            <button
+              type="button"
+              className="fks-project-color-action"
+              disabled={saving}
+              onClick={() => onEditProjectColor(selectedProject)}
+            >
+              <i
+                style={{
+                  background:
+                    selectedProject.accentColor ?? DEFAULT_PROJECT_COLOR
+                }}
+                aria-hidden="true"
+              />
+              <span>
+                <strong>Project colour</strong>
+                <small>
+                  {selectedProject.accentColor ?? DEFAULT_PROJECT_COLOR}
+                </small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="fks-project-popout"
+              aria-label={`Open ${selectedProject.name} in Dataverse`}
+              title="Open project in Dataverse"
+              disabled={saving}
+              onClick={() => {
+                setSubmitError(undefined);
+                void onOpenProjectInDataverse(selectedProject.id).catch(
+                  (reason) =>
+                    setSubmitError(
+                      reason instanceof Error
+                        ? reason.message
+                        : "The Dataverse project could not be opened."
+                    )
+                );
+              }}
+            >
+              <PopOutIcon />
+            </button>
+          </div>
+        )}
         <SearchSelect
           label="Person"
           placeholder="Search people"
@@ -837,6 +985,23 @@ function AllocationDialog({
   );
 }
 
+function PopOutIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
+      <path d="M11 4h5v5M16 4l-7 7" />
+      <path d="M14 11v4a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h4" />
+    </svg>
+  );
+}
+
 interface SearchSelectOption {
   id: string;
   label: string;
@@ -938,7 +1103,10 @@ function SearchSelect({
                 setOpen(false);
               }}
             >
-              <i style={{ background: option.color ?? "#7c6ee6" }} aria-hidden="true" />
+              <i
+                style={{ background: option.color ?? DEFAULT_PROJECT_COLOR }}
+                aria-hidden="true"
+              />
               <span>
                 <strong>{option.label}</strong>
                 {option.description && <small>{option.description}</small>}

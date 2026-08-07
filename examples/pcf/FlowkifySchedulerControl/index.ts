@@ -37,6 +37,13 @@ export class SchedulerControl
       repository: this.repository,
       height,
       defaultZoom: parseDefaultView(context.parameters.defaultView.raw),
+      onProjectOpenInDataverse: async (projectId) => {
+        await context.navigation.openForm({
+          entityName: "flowkify_project",
+          entityId: projectId,
+          openInNewWindow: true
+        });
+      },
       onEntrySelected: (entryId) => {
         this.selectedEntryId = entryId;
         this.notifyOutputChanged();

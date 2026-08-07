@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest>
-  <control namespace="Flowkify" constructor="SchedulerControl" version="0.1.6" display-name-key="Flowkify Scheduler" description-key="Date-only employee scheduling and capacity board" control-type="virtual">
+  <control namespace="Flowkify" constructor="SchedulerControl" version="0.1.7" display-name-key="Flowkify Scheduler" description-key="Date-only employee scheduling and capacity board" control-type="virtual">
     <external-service-usage enabled="false" />
     <property name="configuration" display-name-key="Configuration" description-key="Optional JSON configuration fingerprint" of-type="Multiple" usage="input" required="false" />
     <property name="defaultView" display-name-key="Default view" description-key="The schedule view used when the control starts" of-type="Enum" usage="input" required="false">

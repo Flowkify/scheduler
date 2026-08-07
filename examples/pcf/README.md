@@ -30,6 +30,12 @@ choice for move, resize, and delete actions. Series updates go through the root
 allocation, and **Edit recurring series** loads that root into the same compact
 PCF editor for recurrence-pattern or end-date changes.
 
+When an allocation has a selected project, its editor exposes a project colour
+picker backed by `flowkify_project.flowkify_color`. The adjacent pop-out button
+opens the full project form in a new Dataverse window for all other project
+changes. Colours are stored as `#RRGGBB`; projects without a stored value use
+the scheduler accent colour.
+
 ## Deploy
 
 One-time setup from the repository root:
@@ -39,14 +45,16 @@ npm install
 pac auth create --name FlowkifyDev --environment "<environment-url>"
 ```
 
-Build, bump the component patch version, and deploy:
+Build the scheduler library, then bump and deploy the PCF from its project
+directory:
 
 ```powershell
 npm run build:library
 Set-Location examples/pcf
 pac pcf version --strategy manifest
-npm run build
-pac pcf push --environment "<environment-url>" --solution-unique-name "<solution-unique-name>"
+pac pcf push --publisher-prefix flowkify
 ```
 
-The version bump ensures Power Platform detects each component update.
+`pac pcf push` targets the organization selected by the active PAC
+authentication profile. The version bump ensures Power Platform detects each
+component update.

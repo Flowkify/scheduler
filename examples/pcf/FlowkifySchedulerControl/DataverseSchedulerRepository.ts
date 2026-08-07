@@ -27,6 +27,8 @@ export const RECURRENCE_OPTIONS = [
 
 export type RecurrencePattern = (typeof RECURRENCE_OPTIONS)[number]["value"];
 
+export const DEFAULT_PROJECT_COLOR = "#5A67D8";
+
 export interface AllocationCreateInput {
   projectId: string;
   personId: string;
@@ -240,6 +242,19 @@ export class DataverseSchedulerRepository {
     }));
   }
 
+  public async updateProjectColor(
+    projectId: string,
+    color: string
+  ): Promise<void> {
+    if (!projectId) throw new Error("Choose a project.");
+    const normalized = normalizeProjectColor(color);
+    if (!normalized) throw new Error("Enter a colour in #RRGGBB format.");
+    await this.context.webAPI.updateRecord("flowkify_project", projectId, {
+      flowkify_color: normalized
+    });
+    this.staticData = undefined;
+  }
+
   public async getAllocation(
     id: string
   ): Promise<SchedulerEntry<FlowkifyEntryMetadata>> {
@@ -344,23 +359,12 @@ export class DataverseSchedulerRepository {
       ),
       this.retrieveAll(
         "flowkify_project",
-        "?$select=flowkify_projectid,flowkify_name,flowkify_description,_flowkify_customerid_value,flowkify_stage&$filter=statecode eq 0&$orderby=flowkify_name asc"
+        "?$select=flowkify_projectid,flowkify_name,flowkify_description,_flowkify_customerid_value,flowkify_stage,flowkify_color&$filter=statecode eq 0&$orderby=flowkify_name asc"
       )
     ]);
     return {
       people: peopleRows.map(mapPerson).filter(hasPlanningCapacity),
-      projects: projectRows.map((row) => {
-        const customerName = formatted(row, "_flowkify_customerid_value");
-        return {
-          id: text(row, "flowkify_projectid"),
-          name: text(row, "flowkify_name"),
-          ...(customerName ? { customerName } : {}),
-          metadata: {
-            description: optionalText(row, "flowkify_description"),
-            stage: row.flowkify_stage
-          }
-        };
-      })
+      projects: projectRows.map(mapProject)
     };
   }
 
@@ -434,6 +438,26 @@ export function validateAllocationCreate(
   )
     return "Recurrence must end on or after the allocation end date.";
   return undefined;
+}
+
+export function normalizeProjectColor(color: string): string {
+  const normalized = color.trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : "";
+}
+
+export function mapProject(row: DataverseRow): SchedulerProject {
+  const customerName = formatted(row, "_flowkify_customerid_value");
+  const accentColor = normalizeProjectColor(text(row, "flowkify_color"));
+  return {
+    id: text(row, "flowkify_projectid"),
+    name: text(row, "flowkify_name"),
+    ...(customerName ? { customerName } : {}),
+    ...(accentColor ? { accentColor } : {}),
+    metadata: {
+      description: optionalText(row, "flowkify_description"),
+      stage: row.flowkify_stage
+    }
+  };
 }
 
 function mapAllocation(

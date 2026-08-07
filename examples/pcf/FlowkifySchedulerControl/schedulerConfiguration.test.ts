@@ -1,16 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ReactElement } from "react";
 import type { SchedulerEntry, SchedulerPerson } from "@flowkify/scheduler";
 import {
   buildAvailableCapacity,
   DataverseSchedulerRepository,
   hasPlanningCapacity,
   mapPerson,
+  mapProject,
+  normalizeProjectColor,
   validateAllocationCreate,
   type FlowkifyEntryMetadata,
   type FlowkifyPersonMetadata
 } from "./DataverseSchedulerRepository";
 import { parseDefaultView } from "./configuration";
-import { applyDefaultZoomChange } from "./FlowkifySchedulerHost";
+import {
+  applyDefaultZoomChange,
+  type FlowkifySchedulerHostProps
+} from "./FlowkifySchedulerHost";
+import { SchedulerControl } from "./index";
 
 describe("PCF scheduler configuration", () => {
   it("parses the manifest enum and falls back to week", () => {
@@ -43,6 +50,34 @@ describe("PCF scheduler configuration", () => {
     expect(person.name).toBe("Ada Lovelace");
     expect(person.displayName).toBe("Ada");
     expect(person.secondaryText).toBeUndefined();
+  });
+
+  it("maps valid Dataverse project colours and ignores invalid values", () => {
+    const project = mapProject({
+      flowkify_projectid: "project-1",
+      flowkify_name: "Apollo",
+      flowkify_color: "#4f6fca",
+      "_flowkify_customerid_value@OData.Community.Display.V1.FormattedValue":
+        "Northwind"
+    });
+    expect(project).toMatchObject({
+      id: "project-1",
+      name: "Apollo",
+      customerName: "Northwind",
+      accentColor: "#4F6FCA"
+    });
+    expect(
+      mapProject({
+        flowkify_projectid: "project-2",
+        flowkify_name: "Invalid",
+        flowkify_color: "blue"
+      }).accentColor
+    ).toBeUndefined();
+  });
+
+  it("normalizes project colours", () => {
+    expect(normalizeProjectColor(" #4f6fca ")).toBe("#4F6FCA");
+    expect(normalizeProjectColor("4F6FCA")).toBe("");
   });
 
   it("excludes active people without weekly planning hours", () => {
@@ -161,6 +196,55 @@ describe("PCF scheduler configuration", () => {
         "flowkify_projectid@odata.bind": "/flowkify_projects(project-2)"
       })
     );
+  });
+
+  it("updates only the project colour in Dataverse", async () => {
+    const updateRecord = vi.fn().mockResolvedValue({});
+    const repository = new DataverseSchedulerRepository({
+      parameters: { configuration: { raw: null } },
+      webAPI: { updateRecord }
+    } as never);
+
+    await repository.updateProjectColor("project-1", "#4f6fca");
+
+    expect(updateRecord).toHaveBeenCalledWith(
+      "flowkify_project",
+      "project-1",
+      { flowkify_color: "#4F6FCA" }
+    );
+    await expect(
+      repository.updateProjectColor("project-1", "invalid")
+    ).rejects.toThrow("Enter a colour in #RRGGBB format.");
+    expect(updateRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a project form in a new Dataverse window", async () => {
+    const openForm = vi.fn().mockResolvedValue({ savedEntityReference: [] });
+    const context = {
+      parameters: {
+        configuration: { raw: null },
+        defaultView: { raw: null },
+        height: { raw: null }
+      },
+      mode: {
+        allocatedHeight: 680,
+        trackContainerResize: vi.fn()
+      },
+      navigation: { openForm }
+    } as never;
+    const control = new SchedulerControl();
+    control.init(context, vi.fn());
+    const view = control.updateView(context) as ReactElement<
+      FlowkifySchedulerHostProps
+    >;
+
+    await view.props.onProjectOpenInDataverse("project-1");
+
+    expect(openForm).toHaveBeenCalledWith({
+      entityName: "flowkify_project",
+      entityId: "project-1",
+      openInNewWindow: true
+    });
   });
 
   it("deletes recurring children before the root allocation", async () => {
