@@ -12,9 +12,14 @@ import {
   type FlowkifyEntryMetadata,
   type FlowkifyPersonMetadata
 } from "./DataverseSchedulerRepository";
-import { parseDefaultView } from "./configuration";
+import {
+  normalizeDataverseId,
+  parseDefaultView,
+  resolveHeight
+} from "./configuration";
 import {
   applyDefaultZoomChange,
+  defaultFilters,
   type FlowkifySchedulerHostProps
 } from "./FlowkifySchedulerHost";
 import { SchedulerControl } from "./index";
@@ -26,6 +31,32 @@ describe("PCF scheduler configuration", () => {
     expect(parseDefaultView("2")).toBe("month");
     expect(parseDefaultView(null)).toBe("week");
     expect(parseDefaultView("unexpected")).toBe("week");
+  });
+
+  it("normalizes Dataverse record identifiers", () => {
+    expect(
+      normalizeDataverseId("{26D7685F-FF2F-F011-8C4D-7C1E525E012F}")
+    ).toBe("26d7685f-ff2f-f011-8c4d-7c1e525e012f");
+    expect(normalizeDataverseId("not-an-id")).toBeUndefined();
+    expect(normalizeDataverseId(null)).toBeUndefined();
+  });
+
+  it("fills unconstrained hosts and respects allocated or configured heights", () => {
+    expect(resolveHeight(null, -1)).toBe("100%");
+    expect(resolveHeight(null, 720)).toBe(720);
+    expect(resolveHeight(840, 720)).toBe(840);
+  });
+
+  it("creates editable project and person filter defaults", () => {
+    expect(defaultFilters("project-1", ["person-1", "person-2"])).toEqual({
+      query: "",
+      personIds: ["person-1", "person-2"],
+      projectIds: ["project-1"],
+      capacityStatuses: [],
+      peopleSort: "name-asc"
+    });
+    expect(defaultFilters("project-1").personIds).toEqual([]);
+    expect(defaultFilters().projectIds).toEqual([]);
   });
 
   it("preserves session zoom until the configured default actually changes", () => {
@@ -122,6 +153,49 @@ describe("PCF scheduler configuration", () => {
       { startDate: "2026-08-03", endDate: "2026-08-07" }
     );
     expect(result.map((item) => item.hours)).toEqual([8, 4, 0, 8, 8]);
+  });
+
+  it("resolves project defaults from the project number", async () => {
+    const retrieveMultipleRecords = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entities: [
+          { flowkify_projectid: "26D7685F-FF2F-F011-8C4D-7C1E525E012F" }
+        ]
+      })
+      .mockResolvedValueOnce({
+        entities: [
+          { _flowkify_personid_value: "D7A1F23E-BB76-F011-B4CC-6045BDF32C28" },
+          { _flowkify_personid_value: "d7a1f23e-bb76-f011-b4cc-6045bdf32c28" },
+          { _flowkify_personid_value: "20958086-b121-f011-9989-7c1e525e012f" }
+        ]
+      });
+    const repository = new DataverseSchedulerRepository({
+      parameters: { configuration: { raw: null } },
+      webAPI: { retrieveMultipleRecords }
+    } as never);
+
+    await expect(
+      repository.loadProjectDefaults("PRJ-'42")
+    ).resolves.toEqual({
+      projectId: "26d7685f-ff2f-f011-8c4d-7c1e525e012f",
+      personIds: [
+        "d7a1f23e-bb76-f011-b4cc-6045bdf32c28",
+        "20958086-b121-f011-9989-7c1e525e012f"
+      ]
+    });
+    expect(retrieveMultipleRecords.mock.calls).toEqual([
+      [
+        "flowkify_project",
+        "?$select=flowkify_projectid&$filter=flowkify_projectno eq 'PRJ-''42'&$top=1",
+        5000
+      ],
+      [
+        "flowkify_projectperson",
+        "?$select=_flowkify_personid_value&$filter=statecode eq 0 and _flowkify_projectid_value eq 26d7685f-ff2f-f011-8c4d-7c1e525e012f",
+        5000
+      ]
+    ]);
   });
 
   it("creates allocations with the case-sensitive person navigation property", async () => {
@@ -222,6 +296,8 @@ describe("PCF scheduler configuration", () => {
     const openForm = vi.fn().mockResolvedValue({ savedEntityReference: [] });
     const context = {
       parameters: {
+        hostField: { raw: " PRJ-0042 " },
+        projectId: { raw: null },
         configuration: { raw: null },
         defaultView: { raw: null },
         height: { raw: null }
@@ -231,13 +307,19 @@ describe("PCF scheduler configuration", () => {
         trackContainerResize: vi.fn()
       },
       navigation: { openForm }
-    } as never;
+    };
     const control = new SchedulerControl();
-    control.init(context, vi.fn());
-    const view = control.updateView(context) as ReactElement<
+    control.init(context as never, vi.fn());
+    const view = control.updateView(context as never) as ReactElement<
       FlowkifySchedulerHostProps
     >;
 
+    expect(view.props.projectNumber).toBe("PRJ-0042");
+    const unscopedView = control.updateView({
+      ...context,
+      parameters: { ...context.parameters, hostField: { raw: null } }
+    } as never) as ReactElement<FlowkifySchedulerHostProps>;
+    expect(unscopedView.props.projectNumber).toBeUndefined();
     await view.props.onProjectOpenInDataverse("project-1");
 
     expect(openForm).toHaveBeenCalledWith({

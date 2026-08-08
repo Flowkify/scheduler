@@ -31,8 +31,9 @@ import "./host.css";
 
 export interface FlowkifySchedulerHostProps {
   repository: DataverseSchedulerRepository;
-  height: number;
+  height: React.CSSProperties["height"];
   defaultZoom: SchedulerZoom;
+  projectNumber?: string;
   onProjectOpenInDataverse: (projectId: string) => Promise<void>;
   onEntrySelected: (entryId: string) => void;
 }
@@ -63,6 +64,7 @@ export function FlowkifySchedulerHost({
   repository,
   height,
   defaultZoom,
+  projectNumber,
   onProjectOpenInDataverse,
   onEntrySelected
 }: FlowkifySchedulerHostProps): JSX.Element {
@@ -75,13 +77,9 @@ export function FlowkifySchedulerHost({
     zoom: defaultZoom,
     anchorDate: todayKey()
   });
-  const [filters, setFilters] = useState<SchedulerFilters>({
-    query: "",
-    personIds: [],
-    projectIds: [],
-    capacityStatuses: [],
-    peopleSort: "name-asc"
-  });
+  const [filters, setFilters] = useState<SchedulerFilters>(() =>
+    defaultFilters()
+  );
   const [showWeekends, setShowWeekends] = useState(false);
   const [scopePrompt, setScopePrompt] = useState<ScopePrompt>();
   const [deletePrompt, setDeletePrompt] = useState<DeletePrompt>();
@@ -131,6 +129,21 @@ export function FlowkifySchedulerHost({
   useEffect(() => {
     void reload(range);
   }, [range.startDate, range.endDate, reload]);
+
+  useEffect(() => {
+    let active = true;
+    setFilters(defaultFilters());
+    if (projectNumber)
+      void repository
+        .loadProjectDefaults(projectNumber)
+        .then(({ projectId, personIds }) => {
+          if (active) setFilters(defaultFilters(projectId, personIds));
+        })
+        .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [projectNumber, repository]);
 
   const chooseScope = useCallback(
     (entry: SchedulerEntry<FlowkifyEntryMetadata>): Promise<MutationScope | "cancel"> => {
@@ -275,7 +288,8 @@ export function FlowkifySchedulerHost({
         <AllocationDialog
           mode="create"
           initial={{
-            projectId: "",
+            projectId:
+              filters.projectIds.length === 1 ? filters.projectIds[0] : "",
             personId: createPrompt.draft.personId,
             notes: "",
             startDate: createPrompt.draft.startDate,
@@ -368,6 +382,19 @@ export function FlowkifySchedulerHost({
       )}
     </div>
   );
+}
+
+export function defaultFilters(
+  projectId?: string,
+  personIds: readonly string[] = []
+): SchedulerFilters {
+  return {
+    query: "",
+    personIds,
+    projectIds: projectId ? [projectId] : [],
+    capacityStatuses: [],
+    peopleSort: "name-asc"
+  };
 }
 
 export function applyDefaultZoomChange(

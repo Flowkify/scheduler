@@ -103,5 +103,21 @@ describe("scheduler layout", () => {
     ).get("p1");
     expect(summary).toMatchObject({ allocated: 8, available: 8, status: "full" });
   });
+
+  it("keeps explicitly selected people without project allocations visible", () => {
+    const filtered = filterPeopleAndEntries(
+      ["p1", "p2"],
+      ["project"],
+      "",
+      [
+        { id: "p1", name: "Ada" },
+        { id: "p2", name: "Grace" }
+      ],
+      [entry("atlas", "2026-08-03", "2026-08-03")]
+    );
+
+    expect([...filtered.personIdSet]).toEqual(["p1", "p2"]);
+    expect(filtered.entries.map((candidate) => candidate.id)).toEqual(["atlas"]);
+  });
 });
 

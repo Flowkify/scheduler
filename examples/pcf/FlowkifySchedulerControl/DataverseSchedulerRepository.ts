@@ -13,6 +13,7 @@ import {
   type VisibleRange
 } from "@flowkify/scheduler";
 import type { IInputs } from "./generated/ManifestTypes";
+import { normalizeDataverseId } from "./configuration";
 import { RangeCache } from "./rangeCache";
 
 type DataverseRow = Record<string, unknown>;
@@ -152,6 +153,28 @@ export class DataverseSchedulerRepository {
         range
       )
     };
+  }
+
+  public async loadProjectDefaults(projectNumber: string) {
+    const escapedProjectNumber = projectNumber.replace(/'/g, "''");
+    const [project] = await this.retrieveAll(
+      "flowkify_project",
+      `?$select=flowkify_projectid&$filter=flowkify_projectno eq '${escapedProjectNumber}'&$top=1`
+    );
+    const projectId = project
+      ? normalizeDataverseId(optionalText(project, "flowkify_projectid"))
+      : undefined;
+    if (!projectId) return { projectId, personIds: [] };
+    const people = await this.retrieveAll(
+      "flowkify_projectperson",
+      `?$select=_flowkify_personid_value&$filter=statecode eq 0 and _flowkify_projectid_value eq ${projectId}`
+    );
+    const personIds = people
+      .map((row) =>
+        normalizeDataverseId(optionalText(row, "_flowkify_personid_value"))
+      )
+      .filter((id): id is string => Boolean(id));
+    return { projectId, personIds: [...new Set(personIds)] };
   }
 
   public async create(input: AllocationCreateInput): Promise<void> {

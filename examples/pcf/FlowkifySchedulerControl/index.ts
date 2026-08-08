@@ -1,7 +1,7 @@
 import * as React from "react";
 import type { IInputs, IOutputs } from "./generated/ManifestTypes";
 import { DataverseSchedulerRepository } from "./DataverseSchedulerRepository";
-import { parseDefaultView } from "./configuration";
+import { parseDefaultView, resolveHeight } from "./configuration";
 import {
   FlowkifySchedulerHost,
   type FlowkifySchedulerHostProps
@@ -28,15 +28,15 @@ export class SchedulerControl
   ): React.ReactElement {
     this.repository ??= new DataverseSchedulerRepository(context);
     this.repository.setContext(context);
-    const configuredHeight = context.parameters.height.raw;
-    const height = Math.max(
-      480,
-      configuredHeight || context.mode.allocatedHeight || 680
+    const height = resolveHeight(
+      context.parameters.height.raw,
+      context.mode.allocatedHeight
     );
     const props: FlowkifySchedulerHostProps = {
       repository: this.repository,
       height,
       defaultZoom: parseDefaultView(context.parameters.defaultView.raw),
+      projectNumber: context.parameters.hostField?.raw?.trim() || undefined,
       onProjectOpenInDataverse: async (projectId) => {
         await context.navigation.openForm({
           entityName: "flowkify_project",

@@ -5,10 +5,19 @@ already contain the Flowkify tables and an unmanaged solution.
 
 ## Configuration
 
+- **Project Number** is the optional scheduler scope. Add the control to the
+  `flowkify_projectno` column on a Project form; it resolves the project and
+  selects its active Project Person records in the scheduler filters. Custom
+  Pages can leave it unset to retain the unfiltered scheduler.
 - **Default view** controls whether a new scheduler session opens on the current
   day, week, or month. An unset or invalid value opens the current week.
-- **Height** optionally fixes the scheduler height; otherwise the allocated PCF
-  height is used with a 680px fallback.
+- **Height** optionally fixes the scheduler height; otherwise the control fills
+  its allocated height. Configure the field or section height in the
+  model-driven form designer.
+
+With a project scope active, users can still select any active person. Selected
+people remain visible even without an allocation for that project, and creating
+an allocation preselects the scoped project.
 
 The adapter reads a person's weekly work hours and distributes them evenly over
 Monday through Friday. Time off reduces those daily hours, public holidays have

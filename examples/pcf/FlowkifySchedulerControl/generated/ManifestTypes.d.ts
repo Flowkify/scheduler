@@ -4,10 +4,13 @@
 
 // Define IInputs and IOutputs Type. They should match with ControlManifest.
 export interface IInputs {
+    hostField: ComponentFramework.PropertyTypes.StringProperty;
+    projectId: ComponentFramework.PropertyTypes.StringProperty;
     configuration: ComponentFramework.PropertyTypes.StringProperty;
     defaultView: ComponentFramework.PropertyTypes.EnumProperty<"0" | "1" | "2">;
     height: ComponentFramework.PropertyTypes.WholeNumberProperty;
 }
 export interface IOutputs {
+    hostField?: string;
     selectedEntryId?: string;
 }
