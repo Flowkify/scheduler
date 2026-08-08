@@ -229,7 +229,8 @@ export function filterPeopleAndEntries<TEntryMeta>(
       visibleEntries.map((entry) => entry.personId)
     );
     for (const personId of personIdSet)
-      if (!assignedPeople.has(personId)) personIdSet.delete(personId);
+      if (!assignedPeople.has(personId) && !selectedPeople.has(personId))
+        personIdSet.delete(personId);
   }
   return { personIdSet, entries: visibleEntries };
 }
